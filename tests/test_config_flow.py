@@ -236,16 +236,23 @@ async def test_validate_connection_invokes_client(hass: HomeAssistant) -> None:
 # ── DHCP discovery edge cases ──────────────────────────────────────────
 
 
-async def test_dhcp_malformed_mac_aborts(hass: HomeAssistant) -> None:
-    """A malformed MAC in the DHCP discovery payload aborts cleanly."""
-    info = DhcpServiceInfo(
-        ip="192.168.1.50",
-        hostname="ashly",
-        macaddress=None,  # malformed — format_mac raises
-    )
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_DHCP}, data=info
-    )
+async def test_dhcp_unparseable_mac_aborts(hass: HomeAssistant) -> None:
+    """If format_mac raises on the DHCP payload's MAC, we abort cleanly.
+
+    DhcpServiceInfo validates that macaddress is non-None at construction,
+    so we exercise the defensive branch by calling async_step_dhcp directly
+    with a stub object whose macaddress fails format_mac.
+    """
+    from custom_components.ashly.config_flow import AshlyConfigFlow
+
+    class _Stub:
+        ip = "192.168.1.50"
+        hostname = "ashly"
+        macaddress = object()  # not a string — format_mac will raise
+
+    flow = AshlyConfigFlow()
+    flow.hass = hass
+    result = await flow.async_step_dhcp(_Stub())  # type: ignore[arg-type]
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "not_ashly_device"
 
