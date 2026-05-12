@@ -952,12 +952,12 @@ async def test_get_dvca_skips_bad_entries(client):
             payload=envelope(
                 [
                     "not-a-dict",
-                    {"DSPParameterTypeId": "DCAChannel.Level"},  # no index
-                    {"DSPParameterTypeId": "DCAChannel.Level", "index": "abc"},  # not int
-                    {"DSPParameterTypeId": "DCAChannel.Level", "index": 999},  # out of range
+                    {"DSPParameterTypeId": "Virtual DCA.Level"},  # no index
+                    {"DSPParameterTypeId": "Virtual DCA.Level", "index": "abc"},  # not int
+                    {"DSPParameterTypeId": "Virtual DCA.Level", "index": 999},  # out of range
                     # One valid entry to confirm parser still produces output
                     {
-                        "DSPParameterTypeId": "DCAChannel.Level",
+                        "DSPParameterTypeId": "Virtual DCA.Level",
                         "index": 1,
                         "value": -3.0,
                     },
