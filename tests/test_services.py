@@ -123,3 +123,55 @@ async def test_recall_preset_service_deregistered_on_last_unload(
         assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
         await hass.async_block_till_done()
     assert not hass.services.has_service(DOMAIN, SERVICE_RECALL_PRESET)
+
+
+async def test_recall_preset_registration_is_idempotent(hass: HomeAssistant, loaded_entry):
+    """Calling async_register_services a second time is a no-op."""
+    from custom_components.ashly.services import async_register_services
+
+    # Already registered by the loaded_entry fixture.
+    assert hass.services.has_service(DOMAIN, SERVICE_RECALL_PRESET)
+    # A second registration is a no-op (covers the early return branch).
+    async_register_services(hass)
+    assert hass.services.has_service(DOMAIN, SERVICE_RECALL_PRESET)
+
+
+async def test_recall_preset_device_owned_by_other_integration(hass: HomeAssistant, loaded_entry):
+    """Passing a device that belongs to a non-Ashly integration is rejected."""
+    from homeassistant.helpers import device_registry as dr
+
+    device_reg = dr.async_get(hass)
+    other = device_reg.async_get_or_create(
+        config_entry_id=loaded_entry.entry_id,
+        identifiers={("hue", "fake")},
+        manufacturer="Hue",
+    )
+    # Remove the Ashly entry id so the device is associated with nothing
+    # Ashly-related; the service handler should refuse.
+    device_reg.async_update_device(other.id, remove_config_entry_id=loaded_entry.entry_id)
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_RECALL_PRESET,
+            {"device_id": other.id, "preset": "Preset 1"},
+            blocking=True,
+        )
+
+
+async def test_recall_preset_client_error_raises(hass: HomeAssistant, loaded_entry, mock_client):
+    """If the client raises AshlyError during recall, surface a HomeAssistantError."""
+    from homeassistant.exceptions import HomeAssistantError
+    from homeassistant.helpers import device_registry as dr
+
+    from custom_components.ashly.client import AshlyApiError
+
+    device_reg = dr.async_get(hass)
+    device = next(iter(device_reg.devices.values()))
+    mock_client.async_recall_preset.side_effect = AshlyApiError("boom")
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_RECALL_PRESET,
+            {"device_id": device.id, "preset": "Preset 1"},
+            blocking=True,
+        )
