@@ -29,41 +29,20 @@ rules:
   log-when-unavailable: done
   parallel-updates: done
   reauthentication-flow: done
-  test-coverage:
-    status: todo
-    comment: |
-      Currently 82.82% (CI run 25757470416). Silver requires >=95%. Likely
-      gaps: meter.py socket.io reconnect paths, config_flow.py DHCP edge
-      cases, coordinator.py failure-path branches, client.py error branches.
+  test-coverage: done
 
   # Gold ──────────────────────────────────────────────────────────────────
   devices: done
   diagnostics: done
   discovery: done
   discovery-update-info: done
-  docs-data-update:
-    status: todo
-    comment: |
-      README does not explicitly explain the coordinator polling model.
-      Most state comes from a poll at the configured interval; meters use
-      a separate live socket.io stream.
+  docs-data-update: done
   docs-examples: done
-  docs-known-limitations:
-    status: todo
-    comment: |
-      README has a troubleshooting section but no dedicated "known
-      limitations" section. Worth calling out: only AQM1208/AQM408 are
-      supported, dynamic entity counts are model-aware via system info,
-      and the device must be reachable on the configured port (no UDP
-      discovery beyond DHCP MAC sniffing).
+  docs-known-limitations: done
   docs-supported-devices: done
   docs-supported-functions: done
   docs-troubleshooting: done
-  docs-use-cases:
-    status: todo
-    comment: |
-      Add a "Use cases" section with concrete scenarios: zone-paging
-      automation, meeting-room preset recall, etc.
+  docs-use-cases: done
   dynamic-devices:
     status: exempt
     comment: |
@@ -78,12 +57,7 @@ rules:
   exception-translations: done
   icon-translations: done
   reconfiguration-flow: done
-  repair-issues:
-    status: todo
-    comment: |
-      No repair flows yet. Candidates: device unreachable for >24h,
-      authentication revoked on the device side, firmware version below
-      the minimum tested.
+  repair-issues: done
   stale-devices:
     status: exempt
     comment: |

@@ -54,4 +54,4 @@ jobs:
           pytest tests/ -v --tb=short \
             --cov=custom_components.ashly \
             --cov-report=term-missing \
-            --cov-fail-under=80
+            --cov-fail-under=95
