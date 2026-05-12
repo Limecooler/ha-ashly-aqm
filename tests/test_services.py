@@ -63,9 +63,7 @@ async def test_recall_preset_service_registered(hass: HomeAssistant, loaded_entr
     assert hass.services.has_service(DOMAIN, SERVICE_RECALL_PRESET)
 
 
-async def test_recall_preset_service_by_exact_name(
-    hass: HomeAssistant, loaded_entry, mock_client
-):
+async def test_recall_preset_service_by_exact_name(hass: HomeAssistant, loaded_entry, mock_client):
     device_reg = dr.async_get(hass)
     device = next(iter(device_reg.devices.values()))
     await hass.services.async_call(
@@ -91,9 +89,7 @@ async def test_recall_preset_service_by_numeric_index(
     mock_client.async_recall_preset.assert_awaited_once_with("Preset 2")
 
 
-async def test_recall_preset_service_unknown_preset_raises(
-    hass: HomeAssistant, loaded_entry
-):
+async def test_recall_preset_service_unknown_preset_raises(hass: HomeAssistant, loaded_entry):
     device_reg = dr.async_get(hass)
     device = next(iter(device_reg.devices.values()))
     with pytest.raises(ServiceValidationError):
@@ -105,9 +101,7 @@ async def test_recall_preset_service_unknown_preset_raises(
         )
 
 
-async def test_recall_preset_service_unknown_device_raises(
-    hass: HomeAssistant, loaded_entry
-):
+async def test_recall_preset_service_unknown_device_raises(hass: HomeAssistant, loaded_entry):
     with pytest.raises(ServiceValidationError):
         await hass.services.async_call(
             DOMAIN,

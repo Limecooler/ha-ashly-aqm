@@ -54,9 +54,7 @@ async def test_crosspoint_level_state(mock_coordinator):
 async def test_crosspoint_level_set(mock_coordinator):
     n = AshlyCrosspointLevelNumber(mock_coordinator, 4, 6)
     await n.async_set_native_value(-12.0)
-    mock_coordinator.client.async_set_crosspoint_level.assert_awaited_once_with(
-        4, 6, -12.0
-    )
+    mock_coordinator.client.async_set_crosspoint_level.assert_awaited_once_with(4, 6, -12.0)
     pushed = mock_coordinator.async_set_updated_data.call_args[0][0]
     assert pushed.crosspoints[(4, 6)].level_db == -12.0
 
@@ -69,9 +67,7 @@ async def test_crosspoint_level_disabled_by_default(mock_coordinator):
 async def test_crosspoint_level_unavailable_when_missing(mock_coordinator):
     cps = dict(mock_coordinator.data.crosspoints)
     del cps[(1, 1)]
-    mock_coordinator.data = dataclasses.replace(
-        mock_coordinator.data, crosspoints=cps
-    )
+    mock_coordinator.data = dataclasses.replace(mock_coordinator.data, crosspoints=cps)
     n = AshlyCrosspointLevelNumber(mock_coordinator, 1, 1)
     assert n.available is False
 
@@ -79,9 +75,7 @@ async def test_crosspoint_level_unavailable_when_missing(mock_coordinator):
 # ── platform setup ─────────────────────────────────────────────────────
 
 
-async def test_async_setup_entry_registers_all_numbers(
-    hass, mock_config_entry, mock_coordinator
-):
+async def test_async_setup_entry_registers_all_numbers(hass, mock_config_entry, mock_coordinator):
     """12 DCA + 96 crosspoints + 12 mic preamp gains = 120."""
     from custom_components.ashly import number
 
@@ -127,8 +121,6 @@ async def test_mic_preamp_clamps_below_min(mock_coordinator):
 async def test_mic_preamp_unavailable_when_missing(mock_coordinator):
     gains = dict(mock_coordinator.data.mic_preamp_gain)
     del gains[2]
-    mock_coordinator.data = dataclasses.replace(
-        mock_coordinator.data, mic_preamp_gain=gains
-    )
+    mock_coordinator.data = dataclasses.replace(mock_coordinator.data, mic_preamp_gain=gains)
     n = AshlyMicPreampGainNumber(mock_coordinator, 2)
     assert n.available is False

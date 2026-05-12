@@ -61,25 +61,19 @@ async def test_chain_mute_unavailable_when_chain_missing(mock_coordinator):
 async def test_chain_mute_turn_on_calls_client(mock_coordinator):
     sw = AshlyChainMuteSwitch(mock_coordinator, "OutputChannel.2")
     await sw.async_turn_on()
-    mock_coordinator.client.async_set_chain_mute.assert_awaited_once_with(
-        "OutputChannel.2", True
-    )
+    mock_coordinator.client.async_set_chain_mute.assert_awaited_once_with("OutputChannel.2", True)
     pushed = mock_coordinator.async_set_updated_data.call_args[0][0]
     assert pushed.chains["OutputChannel.2"].muted is True
 
 
 async def test_chain_mute_turn_off(mock_coordinator):
     chains = dict(mock_coordinator.data.chains)
-    chains["InputChannel.3"] = dataclasses.replace(
-        chains["InputChannel.3"], muted=True
-    )
+    chains["InputChannel.3"] = dataclasses.replace(chains["InputChannel.3"], muted=True)
     mock_coordinator.data = dataclasses.replace(mock_coordinator.data, chains=chains)
     sw = AshlyChainMuteSwitch(mock_coordinator, "InputChannel.3")
     assert sw.is_on is True
     await sw.async_turn_off()
-    mock_coordinator.client.async_set_chain_mute.assert_awaited_once_with(
-        "InputChannel.3", False
-    )
+    mock_coordinator.client.async_set_chain_mute.assert_awaited_once_with("InputChannel.3", False)
 
 
 # ── DVCA mute ──────────────────────────────────────────────────────────
@@ -123,9 +117,7 @@ async def test_crosspoint_mute_disabled_by_default(mock_coordinator):
 async def test_crosspoint_mute_turn_off(mock_coordinator):
     sw = AshlyCrosspointMuteSwitch(mock_coordinator, 3, 7)
     await sw.async_turn_off()
-    mock_coordinator.client.async_set_crosspoint_mute.assert_awaited_once_with(
-        3, 7, False
-    )
+    mock_coordinator.client.async_set_crosspoint_mute.assert_awaited_once_with(3, 7, False)
     pushed = mock_coordinator.async_set_updated_data.call_args[0][0]
     assert pushed.crosspoints[(3, 7)].muted is False
 
@@ -133,9 +125,7 @@ async def test_crosspoint_mute_turn_off(mock_coordinator):
 # ── platform setup ─────────────────────────────────────────────────────
 
 
-async def test_async_setup_entry_registers_all_switches(
-    hass, mock_config_entry, mock_coordinator
-):
+async def test_async_setup_entry_registers_all_switches(hass, mock_config_entry, mock_coordinator):
     """power(1) + 12 in + 8 out chain mutes + 12 dvca mutes + 96 xp mutes
     + front-panel LED(1) + 12 phantom power + 2 GPO = 144."""
     from custom_components.ashly import switch
@@ -187,9 +177,7 @@ async def test_phantom_power_turn_on(mock_coordinator):
 async def test_phantom_power_unavailable_when_missing(mock_coordinator):
     pp = dict(mock_coordinator.data.phantom_power)
     del pp[1]
-    mock_coordinator.data = dataclasses.replace(
-        mock_coordinator.data, phantom_power=pp
-    )
+    mock_coordinator.data = dataclasses.replace(mock_coordinator.data, phantom_power=pp)
     sw = AshlyPhantomPowerSwitch(mock_coordinator, 1)
     assert sw.available is False
 

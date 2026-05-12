@@ -64,9 +64,7 @@ async def test_channel_topology_matches_constants(live_client: AshlyClient) -> N
     outputs = [c for c in channels if c.base_type == "Output"]
     # We don't hard-fail on count mismatch (mXa devices report different
     # totals), but we assert at least the AQM1208's expected pair.
-    assert {c.channel_id for c in inputs} >= {
-        input_channel_id(n) for n in range(1, NUM_INPUTS + 1)
-    }
+    assert {c.channel_id for c in inputs} >= {input_channel_id(n) for n in range(1, NUM_INPUTS + 1)}
     assert {c.channel_id for c in outputs} >= {
         output_channel_id(n) for n in range(1, NUM_OUTPUTS + 1)
     }
@@ -87,11 +85,7 @@ async def test_dvca_state_complete(live_client: AshlyClient) -> None:
 
 async def test_crosspoints_complete(live_client: AshlyClient) -> None:
     xp = await live_client.async_get_crosspoints()
-    expected = {
-        (m, i)
-        for m in range(1, NUM_MIXERS + 1)
-        for i in range(1, NUM_INPUTS + 1)
-    }
+    expected = {(m, i) for m in range(1, NUM_MIXERS + 1) for i in range(1, NUM_INPUTS + 1)}
     assert set(xp) == expected
 
 
@@ -265,9 +259,7 @@ async def test_output_mixer_round_trip(live_client: AshlyClient) -> None:
     try:
         await live_client.async_set_output_mixer(target_id, alternate)
         observed = (await live_client.async_get_chain_state())[target_id].mixer_id
-        assert observed == alternate, (
-            f"expected {alternate!r}, got {observed!r}"
-        )
+        assert observed == alternate, f"expected {alternate!r}, got {observed!r}"
     finally:
         await live_client.async_set_output_mixer(target_id, restore_value)
     restored = (await live_client.async_get_chain_state())[target_id].mixer_id

@@ -29,9 +29,7 @@ async def async_get_config_entry_diagnostics(
         "channels": {cid: asdict(c) for cid, c in data.channels.items()},
         "chains": {cid: asdict(s) for cid, s in data.chains.items()},
         "dvca": {str(idx): asdict(s) for idx, s in data.dvca.items()},
-        "crosspoints": {
-            f"{m}.{i}": asdict(s) for (m, i), s in data.crosspoints.items()
-        },
+        "crosspoints": {f"{m}.{i}": asdict(s) for (m, i), s in data.crosspoints.items()},
         "presets": [asdict(p) for p in data.presets],
         "phantom_power": {str(k): v for k, v in data.phantom_power.items()},
         "mic_preamp_gain": {str(k): v for k, v in data.mic_preamp_gain.items()},

@@ -51,29 +51,22 @@ def async_register_services(hass: HomeAssistant) -> None:
         for device_id in device_ids:
             device = device_reg.async_get(device_id)
             if device is None:
-                raise ServiceValidationError(
-                    f"Unknown device id: {device_id}"
-                )
+                raise ServiceValidationError(f"Unknown device id: {device_id}")
             # Find the Ashly config entry that owns this device.
             entry_id = next(
                 (
                     eid
                     for eid in device.config_entries
-                    if (e := hass.config_entries.async_get_entry(eid))
-                    is not None
+                    if (e := hass.config_entries.async_get_entry(eid)) is not None
                     and e.domain == DOMAIN
                 ),
                 None,
             )
             if entry_id is None:
-                raise ServiceValidationError(
-                    f"Device {device_id} is not an Ashly device"
-                )
+                raise ServiceValidationError(f"Device {device_id} is not an Ashly device")
             entry = hass.config_entries.async_get_entry(entry_id)
             if entry is None or not hasattr(entry, "runtime_data"):
-                raise ServiceValidationError(
-                    f"Ashly entry for device {device_id} is not loaded"
-                )
+                raise ServiceValidationError(f"Ashly entry for device {device_id} is not loaded")
             entries.append(entry)
 
         # Resolve preset by exact name first; then by numeric position in
@@ -82,9 +75,7 @@ def async_register_services(hass: HomeAssistant) -> None:
             coordinator = entry.runtime_data.coordinator
             client = entry.runtime_data.client
             data = coordinator.data
-            preset_names = (
-                [p.name for p in data.presets] if data is not None else []
-            )
+            preset_names = [p.name for p in data.presets] if data is not None else []
 
             resolved = _resolve_preset_name(preset, preset_names)
             if resolved is None:
@@ -96,8 +87,7 @@ def async_register_services(hass: HomeAssistant) -> None:
                 await client.async_recall_preset(resolved)
             except AshlyError as err:
                 raise HomeAssistantError(
-                    f"Failed to recall preset {resolved!r} on "
-                    f"{client.host}: {err}"
+                    f"Failed to recall preset {resolved!r} on {client.host}: {err}"
                 ) from err
             # Refresh the coordinator so `last_recalled_preset` and any
             # state that changed (mutes, levels, mixer assignments)

@@ -41,12 +41,8 @@ async def async_setup_entry(
     # 12 input + 12 mixer-input meters. All disabled by default — they
     # update at ~1 Hz and would otherwise clutter the recorder.
     for n in range(1, NUM_INPUTS + 1):
-        entities.append(
-            AshlyChannelMeterSensor(coordinator, meter_client, kind="input", channel=n)
-        )
-        entities.append(
-            AshlyChannelMeterSensor(coordinator, meter_client, kind="mixer", channel=n)
-        )
+        entities.append(AshlyChannelMeterSensor(coordinator, meter_client, kind="input", channel=n))
+        entities.append(AshlyChannelMeterSensor(coordinator, meter_client, kind="mixer", channel=n))
     async_add_entities(entities)
 
 
@@ -207,9 +203,7 @@ class AshlyChannelMeterSensor(AshlyEntity, SensorEntity):
             self._cached_db = raw_to_db(records[self._meter_index])
         # HA tracks the remove-listener callback for us via
         # `async_on_remove`, so we don't have to manage it manually.
-        self.async_on_remove(
-            self._meter_client.add_listener(self._on_meter_update)
-        )
+        self.async_on_remove(self._meter_client.add_listener(self._on_meter_update))
 
     @callback
     def _on_meter_update(self, records: list[int]) -> None:

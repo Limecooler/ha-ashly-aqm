@@ -26,12 +26,8 @@ async def test_current_option_is_none_when_unassigned(mock_coordinator):
 
 async def test_current_option_reflects_assigned_mixer(mock_coordinator):
     chains = dict(mock_coordinator.data.chains)
-    chains["OutputChannel.3"] = dataclasses.replace(
-        chains["OutputChannel.3"], mixer_id="Mixer.4"
-    )
-    mock_coordinator.data = dataclasses.replace(
-        mock_coordinator.data, chains=chains
-    )
+    chains["OutputChannel.3"] = dataclasses.replace(chains["OutputChannel.3"], mixer_id="Mixer.4")
+    mock_coordinator.data = dataclasses.replace(mock_coordinator.data, chains=chains)
     sel = AshlyOutputMixerSelect(mock_coordinator, 3)
     assert sel.current_option == "Mixer.4"
 
@@ -48,12 +44,8 @@ async def test_select_option_calls_client_and_pushes_optimistic(mock_coordinator
 
 async def test_select_none_clears_optimistic_mixer(mock_coordinator):
     chains = dict(mock_coordinator.data.chains)
-    chains["OutputChannel.1"] = dataclasses.replace(
-        chains["OutputChannel.1"], mixer_id="Mixer.1"
-    )
-    mock_coordinator.data = dataclasses.replace(
-        mock_coordinator.data, chains=chains
-    )
+    chains["OutputChannel.1"] = dataclasses.replace(chains["OutputChannel.1"], mixer_id="Mixer.1")
+    mock_coordinator.data = dataclasses.replace(mock_coordinator.data, chains=chains)
     sel = AshlyOutputMixerSelect(mock_coordinator, 1)
     await sel.async_select_option(NO_MIXER)
     pushed = mock_coordinator.async_set_updated_data.call_args[0][0]
@@ -67,9 +59,7 @@ async def test_select_invalid_option_rejected(mock_coordinator):
     mock_coordinator.client.async_set_output_mixer.assert_not_awaited()
 
 
-async def test_async_setup_entry_registers_eight_selects(
-    hass, mock_config_entry, mock_coordinator
-):
+async def test_async_setup_entry_registers_eight_selects(hass, mock_config_entry, mock_coordinator):
     from custom_components.ashly import select
 
     mock_config_entry.runtime_data = type(

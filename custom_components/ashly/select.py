@@ -37,9 +37,7 @@ async def async_setup_entry(
 ) -> None:
     """Register select entities."""
     coordinator = entry.runtime_data.coordinator
-    entities = [
-        AshlyOutputMixerSelect(coordinator, n) for n in range(1, NUM_OUTPUTS + 1)
-    ]
+    entities = [AshlyOutputMixerSelect(coordinator, n) for n in range(1, NUM_OUTPUTS + 1)]
     async_add_entities(entities)
 
 
@@ -77,19 +75,13 @@ class AshlyOutputMixerSelect(AshlyEntity, SelectEntity):
     @property
     def available(self) -> bool:
         data = self.coordinator.data
-        return (
-            super().available
-            and data is not None
-            and self._channel_id in data.chains
-        )
+        return super().available and data is not None and self._channel_id in data.chains
 
     async def async_select_option(self, option: str) -> None:
         if option not in self._attr_options:
             raise ServiceValidationError(f"Unknown mixer option: {option!r}")
         try:
-            await self.coordinator.client.async_set_output_mixer(
-                self._channel_id, option
-            )
+            await self.coordinator.client.async_set_output_mixer(self._channel_id, option)
         except AshlyError as err:
             raise HomeAssistantError(
                 f"Failed to set output {self._output_number} mixer: {err}"
@@ -107,6 +99,4 @@ class AshlyOutputMixerSelect(AshlyEntity, SelectEntity):
             return
         new_mixer = None if option == NO_MIXER else option
         chains[self._channel_id] = dataclasses.replace(existing, mixer_id=new_mixer)
-        self.coordinator.async_set_updated_data(
-            dataclasses.replace(data, chains=chains)
-        )
+        self.coordinator.async_set_updated_data(dataclasses.replace(data, chains=chains))

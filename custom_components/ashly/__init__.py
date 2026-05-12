@@ -69,9 +69,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AshlyConfigEntry) -> boo
     return True
 
 
-async def _async_reload_on_options(
-    hass: HomeAssistant, entry: AshlyConfigEntry
-) -> None:
+async def _async_reload_on_options(hass: HomeAssistant, entry: AshlyConfigEntry) -> None:
     """Reload the integration when options are updated."""
     await hass.config_entries.async_reload(entry.entry_id)
 
@@ -94,9 +92,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: AshlyConfigEntry) -> bo
             await meter_client.async_stop()
         # Drop services when no other Ashly entries remain.
         remaining = [
-            e
-            for e in hass.config_entries.async_entries(DOMAIN)
-            if e.entry_id != entry.entry_id
+            e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id != entry.entry_id
         ]
         if not remaining:
             async_unregister_services(hass)

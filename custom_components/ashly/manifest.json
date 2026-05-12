@@ -4,11 +4,11 @@
   "codeowners": ["@Limecooler"],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/limecooler/ha-ashly-aqm",
   "dhcp": [
     { "macaddress": "0014AA*" },
     { "registered_devices": true }
   ],
+  "documentation": "https://github.com/limecooler/ha-ashly-aqm",
   "integration_type": "device",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/limecooler/ha-ashly-aqm/issues",

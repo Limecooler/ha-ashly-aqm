@@ -19,9 +19,7 @@ def _patch_client(mock_client, patched_session):
         yield mock_client
 
 
-async def test_setup_entry_success(
-    hass: HomeAssistant, mock_config_entry, _patch_client
-) -> None:
+async def test_setup_entry_success(hass: HomeAssistant, mock_config_entry, _patch_client) -> None:
     mock_config_entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()
@@ -55,20 +53,14 @@ async def test_options_update_triggers_reload(
     assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()
 
-    with patch(
-        "homeassistant.config_entries.ConfigEntries.async_reload"
-    ) as mock_reload:
+    with patch("homeassistant.config_entries.ConfigEntries.async_reload") as mock_reload:
         mock_reload.return_value = True
-        hass.config_entries.async_update_entry(
-            mock_config_entry, options={"poll_interval": 60}
-        )
+        hass.config_entries.async_update_entry(mock_config_entry, options={"poll_interval": 60})
         await hass.async_block_till_done()
     mock_reload.assert_called_once_with(mock_config_entry.entry_id)
 
 
-async def test_unload_entry(
-    hass: HomeAssistant, mock_config_entry, _patch_client
-) -> None:
+async def test_unload_entry(hass: HomeAssistant, mock_config_entry, _patch_client) -> None:
     """Unload should succeed; HA owns the session lifecycle, so the client is
     not explicitly closed by the integration."""
     mock_config_entry.add_to_hass(hass)

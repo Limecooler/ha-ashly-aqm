@@ -64,6 +64,7 @@ def _to_float(value: Any, default: float = 0.0) -> float:
             return default
     return default
 
+
 _LOGGER = logging.getLogger(__name__)
 
 API_PREFIX = "/v1.0-beta"
@@ -255,26 +256,18 @@ class AshlyClient:
                         # Don't include any response body for auth failures
                         # — some embedded devices echo credentials in
                         # error text.
-                        raise AshlyAuthError(
-                            f"Authentication failed (HTTP {resp.status})"
-                        )
+                        raise AshlyAuthError(f"Authentication failed (HTTP {resp.status})")
                     if resp.status >= HTTPStatus.BAD_REQUEST:
-                        raise AshlyApiError(
-                            f"Login failed (HTTP {resp.status})"
-                        )
+                        raise AshlyApiError(f"Login failed (HTTP {resp.status})")
                     body = await self._parse_json(resp)
                     if isinstance(body, dict) and body.get("success") is False:
                         # Device may return 200 + success:false on locked
                         # accounts or invalid credentials.
-                        raise AshlyAuthError(
-                            f"Login refused: {body.get('error') or 'unknown'}"
-                        )
+                        raise AshlyAuthError(f"Login refused: {body.get('error') or 'unknown'}")
                     self._authenticated = True
                     self._auth_epoch += 1
             except (aiohttp.ClientError, TimeoutError) as err:
-                raise AshlyConnectionError(
-                    f"Cannot connect to {self.host}:{self.port}"
-                ) from err
+                raise AshlyConnectionError(f"Cannot connect to {self.host}:{self.port}") from err
 
     async def _parse_json(self, resp: aiohttp.ClientResponse) -> Any:
         try:
@@ -308,9 +301,7 @@ class AshlyClient:
             return result
         await self.async_login(expected_epoch=saw_epoch)
         # Retry once with retry_auth=False to bound recursion depth.
-        result, retry_again, _ = await self._request_once(
-            method, path, json=json, retry_auth=False
-        )
+        result, retry_again, _ = await self._request_once(method, path, json=json, retry_auth=False)
         if retry_again:
             # Defensive: would only happen if retry_auth=False was ignored.
             raise AshlyAuthError("Re-auth did not unblock the request")
@@ -333,15 +324,14 @@ class AshlyClient:
         url = self._url(path)
         saw_epoch = self._auth_epoch
         try:
-            async with self._semaphore, self._session.request(
-                method, url, json=json, timeout=REQUEST_TIMEOUT
-            ) as resp:
+            async with (
+                self._semaphore,
+                self._session.request(method, url, json=json, timeout=REQUEST_TIMEOUT) as resp,
+            ):
                 if resp.status == HTTPStatus.UNAUTHORIZED and retry_auth:
                     return None, True, saw_epoch
                 if resp.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
-                    raise AshlyAuthError(
-                        f"Authentication failed (HTTP {resp.status})"
-                    )
+                    raise AshlyAuthError(f"Authentication failed (HTTP {resp.status})")
                 if resp.status == HTTPStatus.NOT_FOUND:
                     raise AshlyApiError(f"Endpoint not found: {url}")
                 if resp.status >= HTTPStatus.BAD_REQUEST:
@@ -349,16 +339,12 @@ class AshlyClient:
                         text = await resp.text()
                     except aiohttp.ClientError:
                         text = "<unable to read body>"
-                    raise AshlyApiError(
-                        f"API error (HTTP {resp.status}): {text[:200]}"
-                    )
+                    raise AshlyApiError(f"API error (HTTP {resp.status}): {text[:200]}")
                 return await self._parse_json(resp), False, saw_epoch
         except AshlyError:
             raise
         except (aiohttp.ClientError, TimeoutError) as err:
-            raise AshlyConnectionError(
-                f"Cannot connect to {self.host}:{self.port}"
-            ) from err
+            raise AshlyConnectionError(f"Cannot connect to {self.host}:{self.port}") from err
 
     async def _get(self, path: str) -> Any:
         return await self._request("GET", path)
@@ -377,9 +363,7 @@ class AshlyClient:
         if not isinstance(data, dict):
             raise AshlyApiError(f"Unexpected response (not an object): {data!r}")
         if data.get("success") is False:
-            raise AshlyApiError(
-                f"Device reported failure: {data.get('error') or data}"
-            )
+            raise AshlyApiError(f"Device reported failure: {data.get('error') or data}")
         if "data" not in data:
             raise AshlyApiError(f"Response missing 'data' field: {data!r}")
         if data["data"] is None:
@@ -444,9 +428,7 @@ class AshlyClient:
 
     async def async_get_front_panel(self) -> FrontPanelInfo:
         """Fetch front-panel state (power + LED enable)."""
-        data = self._first_or_empty(
-            self._unwrap(await self._get("/system/frontPanel/info"))
-        )
+        data = self._first_or_empty(self._unwrap(await self._get("/system/frontPanel/info")))
         return FrontPanelInfo(
             power_on=str(data.get("powerState", "Off")).lower() == "on",
             leds_enabled=_to_bool(data.get("frontPanelLEDEnable", True), default=True),
@@ -498,7 +480,9 @@ class AshlyClient:
             except (KeyError, TypeError, ValueError) as err:
                 _LOGGER.debug(
                     "[%s] Skipping malformed channel entry %r: %s",
-                    self.host, item, err,
+                    self.host,
+                    item,
+                    err,
                 )
         return channels
 
@@ -548,9 +532,7 @@ class AshlyClient:
 
     async def async_get_dvca_state(self) -> dict[int, DVCAState]:
         """Fetch level + mute + name for every DVCA group."""
-        raw = self._unwrap(
-            await self._get("/workingsettings/virtualDVCA/parameters")
-        )
+        raw = self._unwrap(await self._get("/workingsettings/virtualDVCA/parameters"))
         if not isinstance(raw, list):
             raise AshlyApiError("Unexpected DVCA parameter shape")
 
@@ -567,7 +549,8 @@ class AshlyClient:
             except (TypeError, ValueError):
                 _LOGGER.debug(
                     "[%s] Skipping DVCA entry with non-int index %r",
-                    self.host, item.get("index"),
+                    self.host,
+                    item.get("index"),
                 )
                 continue
             if not 1 <= idx <= NUM_DVCA_GROUPS:
@@ -579,9 +562,7 @@ class AshlyClient:
             elif type_id == "Virtual DCA.Mute":
                 mutes[idx] = _to_bool(value)
             elif type_id == "Virtual DCA.Name":
-                names[idx] = (
-                    str(value) if value is not None and value != "" else f"DCA {idx}"
-                )
+                names[idx] = str(value) if value is not None and value != "" else f"DCA {idx}"
 
         return {
             i: DVCAState(
@@ -613,9 +594,7 @@ class AshlyClient:
 
     async def async_get_crosspoints(self) -> dict[tuple[int, int], CrosspointState]:
         """Fetch every mixer x input source level + mute as a flat dict."""
-        raw = self._unwrap(
-            await self._get("/workingsettings/dsp/mixer/config/parameter")
-        )
+        raw = self._unwrap(await self._get("/workingsettings/dsp/mixer/config/parameter"))
         if not isinstance(raw, list):
             raise AshlyApiError("Unexpected mixer parameter shape")
 
@@ -635,13 +614,17 @@ class AshlyClient:
             except (TypeError, ValueError):
                 _LOGGER.debug(
                     "[%s] Skipping crosspoint with unparseable ids %r/%r",
-                    self.host, mixer_id, channel_id,
+                    self.host,
+                    mixer_id,
+                    channel_id,
                 )
                 continue
             if not (1 <= mixer_idx <= NUM_MIXERS and 1 <= input_idx <= NUM_INPUTS):
                 _LOGGER.debug(
                     "[%s] Crosspoint indices out of range: m=%s i=%s",
-                    self.host, mixer_idx, input_idx,
+                    self.host,
+                    mixer_idx,
+                    input_idx,
                 )
                 continue
             key = (mixer_idx, input_idx)
@@ -709,7 +692,8 @@ class AshlyClient:
             if not name:
                 _LOGGER.debug(
                     "[%s] Skipping preset entry without a name: %r",
-                    self.host, item,
+                    self.host,
+                    item,
                 )
                 continue
             out.append(PresetInfo(id=str(item.get("id") or name), name=name))
@@ -743,7 +727,9 @@ class AshlyClient:
         for item in raw:
             if not isinstance(item, dict):
                 _LOGGER.debug(
-                    "[%s] Skipping non-dict phantom entry %r", self.host, item,
+                    "[%s] Skipping non-dict phantom entry %r",
+                    self.host,
+                    item,
                 )
                 continue
             try:
@@ -796,9 +782,7 @@ class AshlyClient:
 
     async def async_get_gpo(self) -> dict[int, bool]:
         """Return per-pin GPO state (True = high), keyed by pin number."""
-        raw = self._unwrap(
-            await self._get("/workingsettings/generalPurposeOutputConfiguration")
-        )
+        raw = self._unwrap(await self._get("/workingsettings/generalPurposeOutputConfiguration"))
         if not isinstance(raw, list):
             raise AshlyApiError("Unexpected GPO list shape")
         out: dict[int, bool] = {}
@@ -826,9 +810,7 @@ class AshlyClient:
 
     async def async_get_last_recalled_preset(self) -> LastRecalledPreset:
         """Fetch the name of the most-recently-recalled preset (if any)."""
-        data = self._first_or_empty(
-            self._unwrap(await self._get("/preset/lastRecalled"))
-        )
+        data = self._first_or_empty(self._unwrap(await self._get("/preset/lastRecalled")))
         name = data.get("lastRecalledPreset")
         return LastRecalledPreset(
             name=None if name in (None, "", "None") else str(name),

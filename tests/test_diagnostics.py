@@ -14,9 +14,7 @@ from custom_components.ashly.diagnostics import (
 
 
 @pytest.fixture
-async def loaded_entry(
-    hass: HomeAssistant, mock_config_entry, mock_client, patched_session
-):
+async def loaded_entry(hass: HomeAssistant, mock_config_entry, mock_client, patched_session):
     with patch("custom_components.ashly.AshlyClient", return_value=mock_client):
         mock_config_entry.add_to_hass(hass)
         await hass.config_entries.async_setup(mock_config_entry.entry_id)
@@ -24,9 +22,7 @@ async def loaded_entry(
     yield mock_config_entry
 
 
-async def test_diagnostics_redacts_sensitive(
-    hass: HomeAssistant, loaded_entry
-) -> None:
+async def test_diagnostics_redacts_sensitive(hass: HomeAssistant, loaded_entry) -> None:
     diag = await async_get_config_entry_diagnostics(hass, loaded_entry)
 
     flat = repr(diag)

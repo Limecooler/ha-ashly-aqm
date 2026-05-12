@@ -105,13 +105,9 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
         client: AshlyClient,
         config_entry: AshlyConfigEntry,
     ) -> None:
-        raw_interval = config_entry.options.get(
-            "poll_interval", DEFAULT_SCAN_INTERVAL
-        )
+        raw_interval = config_entry.options.get("poll_interval", DEFAULT_SCAN_INTERVAL)
         try:
-            poll_interval = max(
-                _MIN_POLL_INTERVAL, min(_MAX_POLL_INTERVAL, int(raw_interval))
-            )
+            poll_interval = max(_MIN_POLL_INTERVAL, min(_MAX_POLL_INTERVAL, int(raw_interval)))
         except (TypeError, ValueError):
             poll_interval = DEFAULT_SCAN_INTERVAL
 
@@ -158,9 +154,7 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
 
         if not system_info.mac_address:
             # Without a MAC we can't form stable unique_ids; treat as not ready.
-            raise UpdateFailed(
-                f"Device {self.client.host} did not return a MAC address"
-            )
+            raise UpdateFailed(f"Device {self.client.host} did not return a MAC address")
 
         self.system_info = system_info
         self._channels = {c.channel_id: c for c in channels}
@@ -207,15 +201,14 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
         # transient outage. A device that's rebooting can drop some
         # endpoints to 401 and others to TimeoutError — we don't want HA
         # to invalidate credentials in that case.
-        has_connection_error = any(
-            isinstance(r, AshlyConnectionError) for r in results
-        )
+        has_connection_error = any(isinstance(r, AshlyConnectionError) for r in results)
         if not has_connection_error:
             for idx, r in enumerate(results):
                 if isinstance(r, AshlyAuthError):
                     _LOGGER.warning(
                         "[%s] Auth failed during %s — initiating reauth",
-                        self.client.host, _TASK_LABELS[idx],
+                        self.client.host,
+                        _TASK_LABELS[idx],
                     )
                     raise ConfigEntryAuthFailed from r
 
@@ -242,7 +235,8 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
             if isinstance(r, AshlyConnectionError):
                 _LOGGER.debug(
                     "[%s] %s poll failed transiently; reusing last value",
-                    self.client.host, _TASK_LABELS[idx],
+                    self.client.host,
+                    _TASK_LABELS[idx],
                 )
                 return fallback
             if isinstance(r, Exception):
@@ -257,9 +251,7 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
         gpo = _resolve(7, prev.gpo if prev else {})
         last_recalled = _resolve(
             8,
-            prev.last_recalled_preset
-            if prev
-            else LastRecalledPreset(name=None, modified=False),
+            prev.last_recalled_preset if prev else LastRecalledPreset(name=None, modified=False),
         )
 
         front_panel, chains, dvca, crosspoints = results[:4]

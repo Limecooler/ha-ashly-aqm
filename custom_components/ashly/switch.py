@@ -132,8 +132,10 @@ class AshlyChainMuteSwitch(AshlyEntity, SwitchEntity):
         # Friendly name uses the channel's user-set or default name from
         # the device, falling back to a generic numbered label.
         ch = coordinator.channels.get(channel_id)
-        ch_name = (ch.name or ch.default_name) if ch else (
-            f"Input {number}" if is_input else f"Output {number}"
+        ch_name = (
+            (ch.name or ch.default_name)
+            if ch
+            else (f"Input {number}" if is_input else f"Output {number}")
         )
         super().__init__(
             coordinator,
@@ -153,11 +155,7 @@ class AshlyChainMuteSwitch(AshlyEntity, SwitchEntity):
     @property
     def available(self) -> bool:
         data = self.coordinator.data
-        return (
-            super().available
-            and data is not None
-            and self._channel_id in data.chains
-        )
+        return super().available and data is not None and self._channel_id in data.chains
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         try:
@@ -183,9 +181,7 @@ class AshlyChainMuteSwitch(AshlyEntity, SwitchEntity):
         if existing is None:
             return
         chains[self._channel_id] = dataclasses.replace(existing, muted=muted)
-        self.coordinator.async_set_updated_data(
-            dataclasses.replace(data, chains=chains)
-        )
+        self.coordinator.async_set_updated_data(dataclasses.replace(data, chains=chains))
 
 
 # ── DVCA mute ──────────────────────────────────────────────────────────
@@ -198,8 +194,7 @@ class AshlyDVCAMuteSwitch(AshlyEntity, SwitchEntity):
 
     def __init__(self, coordinator: AshlyCoordinator, index: int) -> None:
         # Use the DCA's user-set name from the device when available.
-        dvca_state = (coordinator.data.dvca.get(index)
-                      if coordinator.data is not None else None)
+        dvca_state = coordinator.data.dvca.get(index) if coordinator.data is not None else None
         name = dvca_state.name if dvca_state else f"DCA {index}"
         super().__init__(
             coordinator,
@@ -219,11 +214,7 @@ class AshlyDVCAMuteSwitch(AshlyEntity, SwitchEntity):
     @property
     def available(self) -> bool:
         data = self.coordinator.data
-        return (
-            super().available
-            and data is not None
-            and self._index in data.dvca
-        )
+        return super().available and data is not None and self._index in data.dvca
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         try:
@@ -249,9 +240,7 @@ class AshlyDVCAMuteSwitch(AshlyEntity, SwitchEntity):
         if existing is None:
             return
         dvca[self._index] = dataclasses.replace(existing, muted=muted)
-        self.coordinator.async_set_updated_data(
-            dataclasses.replace(data, dvca=dvca)
-        )
+        self.coordinator.async_set_updated_data(dataclasses.replace(data, dvca=dvca))
 
 
 # ── Crosspoint source mute (mixer x input) ─────────────────────────────
@@ -295,26 +284,18 @@ class AshlyCrosspointMuteSwitch(AshlyEntity, SwitchEntity):
     @property
     def available(self) -> bool:
         data = self.coordinator.data
-        return (
-            super().available
-            and data is not None
-            and self._key in data.crosspoints
-        )
+        return super().available and data is not None and self._key in data.crosspoints
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         try:
-            await self.coordinator.client.async_set_crosspoint_mute(
-                self._mixer, self._input, True
-            )
+            await self.coordinator.client.async_set_crosspoint_mute(self._mixer, self._input, True)
         except AshlyError as err:
             raise _wrap(err, f"mute crosspoint {self._mixer}x{self._input}") from err
         self._push_optimistic(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         try:
-            await self.coordinator.client.async_set_crosspoint_mute(
-                self._mixer, self._input, False
-            )
+            await self.coordinator.client.async_set_crosspoint_mute(self._mixer, self._input, False)
         except AshlyError as err:
             raise _wrap(err, f"unmute crosspoint {self._mixer}x{self._input}") from err
         self._push_optimistic(False)
@@ -329,9 +310,7 @@ class AshlyCrosspointMuteSwitch(AshlyEntity, SwitchEntity):
         if existing is None:
             return
         crosspoints[self._key] = dataclasses.replace(existing, muted=muted)
-        self.coordinator.async_set_updated_data(
-            dataclasses.replace(data, crosspoints=crosspoints)
-        )
+        self.coordinator.async_set_updated_data(dataclasses.replace(data, crosspoints=crosspoints))
 
 
 # ── Front-panel LED enable (single switch) ─────────────────────────────
@@ -413,11 +392,7 @@ class AshlyPhantomPowerSwitch(AshlyEntity, SwitchEntity):
     @property
     def available(self) -> bool:
         data = self.coordinator.data
-        return (
-            super().available
-            and data is not None
-            and self._input in data.phantom_power
-        )
+        return super().available and data is not None and self._input in data.phantom_power
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         try:
@@ -440,9 +415,7 @@ class AshlyPhantomPowerSwitch(AshlyEntity, SwitchEntity):
             return
         phantom = dict(data.phantom_power)
         phantom[self._input] = enabled
-        self.coordinator.async_set_updated_data(
-            dataclasses.replace(data, phantom_power=phantom)
-        )
+        self.coordinator.async_set_updated_data(dataclasses.replace(data, phantom_power=phantom))
 
 
 # ── General-purpose outputs (rear panel GPO pins) ──────────────────────
@@ -496,6 +469,4 @@ class AshlyGPOSwitch(AshlyEntity, SwitchEntity):
             return
         gpo = dict(data.gpo)
         gpo[self._pin] = high
-        self.coordinator.async_set_updated_data(
-            dataclasses.replace(data, gpo=gpo)
-        )
+        self.coordinator.async_set_updated_data(dataclasses.replace(data, gpo=gpo))

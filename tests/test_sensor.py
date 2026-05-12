@@ -71,6 +71,7 @@ async def test_meter_sensor_seeds_at_floor(mock_coordinator, mock_meter_client):
 
 async def test_meter_sensor_rejects_bad_kind(mock_coordinator, mock_meter_client):
     import pytest
+
     with pytest.raises(ValueError):
         AshlyChannelMeterSensor(mock_coordinator, mock_meter_client, kind="bogus", channel=1)
 

@@ -132,9 +132,7 @@ class AshlyMeterClient:
         if self._task is not None and not self._task.done():
             return
         self._stop_event.clear()
-        self._task = asyncio.create_task(
-            self._run(), name=f"ashly-meters[{self._host}]"
-        )
+        self._task = asyncio.create_task(self._run(), name=f"ashly-meters[{self._host}]")
 
     async def async_stop(self) -> None:
         """Stop streaming and tear down the websocket cleanly.
@@ -156,9 +154,7 @@ class AshlyMeterClient:
 
     # ── Subscription ───────────────────────────────────────────────
 
-    def add_listener(
-        self, callback: Callable[[list[int]], None]
-    ) -> Callable[[], None]:
+    def add_listener(self, callback: Callable[[list[int]], None]) -> Callable[[], None]:
         """Register a callback that fires when a new meter snapshot is ready.
 
         Returns a remove-listener function. Throttled to one call per
@@ -198,11 +194,7 @@ class AshlyMeterClient:
                 # Escalate to WARNING once we hit the max backoff, since
                 # at that point the device has been unreachable for
                 # ~minute and the user would want to know.
-                level = (
-                    logging.WARNING
-                    if backoff >= _MAX_BACKOFF_S
-                    else logging.INFO
-                )
+                level = logging.WARNING if backoff >= _MAX_BACKOFF_S else logging.INFO
                 _LOGGER.log(
                     level,
                     "[%s] meter websocket disconnected (%s); reconnecting in %.1fs",
@@ -211,9 +203,7 @@ class AshlyMeterClient:
                     backoff,
                 )
                 try:
-                    await asyncio.wait_for(
-                        self._stop_event.wait(), timeout=backoff
-                    )
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=backoff)
                     break  # stop requested
                 except TimeoutError:
                     pass
@@ -294,16 +284,12 @@ class AshlyMeterClient:
             wait_task = asyncio.create_task(sio.wait())
             stop_task = asyncio.create_task(self._stop_event.wait())
             try:
-                await asyncio.wait(
-                    [wait_task, stop_task], return_when=asyncio.FIRST_COMPLETED
-                )
+                await asyncio.wait([wait_task, stop_task], return_when=asyncio.FIRST_COMPLETED)
             finally:
                 wait_task.cancel()
                 stop_task.cancel()
                 watchdog.cancel()
-                with contextlib.suppress(
-                    socketio.exceptions.SocketIOError, RuntimeError
-                ):
+                with contextlib.suppress(socketio.exceptions.SocketIOError, RuntimeError):
                     await sio.disconnect()
                 self._sio = None
         finally:

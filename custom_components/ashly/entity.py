@@ -42,7 +42,5 @@ class AshlyEntity(CoordinatorEntity[AshlyCoordinator]):
             model=info.model,
             sw_version=info.firmware_version,
             hw_version=info.hardware_revision or None,
-            configuration_url=(
-                f"http://{coordinator.client.host}:{coordinator.client.port}"
-            ),
+            configuration_url=(f"http://{coordinator.client.host}:{coordinator.client.port}"),
         )

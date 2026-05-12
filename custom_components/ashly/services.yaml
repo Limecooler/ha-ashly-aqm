@@ -5,7 +5,7 @@ recall_preset:
     settings are overwritten with the preset's saved state.
   target:
     device:
-      integration: ashly
+      - integration: ashly
   fields:
     preset:
       name: Preset

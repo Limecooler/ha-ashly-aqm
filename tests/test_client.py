@@ -163,9 +163,11 @@ async def test_set_power_sends_string_enum(client):
         m.post(f"{BASE}/system/frontPanel/info", payload=envelope({}))
         await client.async_set_power(True)
         request = next(iter(m.requests.values()))[0]
-        body = json.loads(request.kwargs["json"]) if isinstance(
-            request.kwargs.get("json"), str
-        ) else request.kwargs.get("json")
+        body = (
+            json.loads(request.kwargs["json"])
+            if isinstance(request.kwargs.get("json"), str)
+            else request.kwargs.get("json")
+        )
         assert body == {"powerState": "On"}
 
 
@@ -350,10 +352,7 @@ async def test_get_crosspoints_pairs_levels_and_mutes(client):
 
 
 async def test_set_crosspoint_level_path(client):
-    url = (
-        f"{BASE}/workingsettings/dsp/mixer/config/parameter/"
-        "Mixer.2.InputChannel.5.Source Level"
-    )
+    url = f"{BASE}/workingsettings/dsp/mixer/config/parameter/Mixer.2.InputChannel.5.Source Level"
     with aioresponses() as m:
         m.post(url, payload=envelope({}))
         await client.async_set_crosspoint_level(2, 5, -12.0)
@@ -556,9 +555,7 @@ async def test_get_front_panel_combines_power_and_leds(client):
     with aioresponses() as m:
         m.get(
             f"{BASE}/system/frontPanel/info",
-            payload=envelope(
-                [{"powerState": "On", "frontPanelLEDEnable": False}]
-            ),
+            payload=envelope([{"powerState": "On", "frontPanelLEDEnable": False}]),
         )
         info = await client.async_get_front_panel()
     assert info.power_on is True
@@ -609,8 +606,7 @@ async def test_set_phantom_power_rejects_bad_input(client, bad):
 
 async def test_get_mic_preamp_returns_dict(client):
     payload = [
-        {"id": i, "DSPChannelId": f"InputChannel.{i}", "gain": (i - 1) * 6}
-        for i in range(1, 13)
+        {"id": i, "DSPChannelId": f"InputChannel.{i}", "gain": (i - 1) * 6} for i in range(1, 13)
     ]
     with aioresponses() as m:
         m.get(f"{BASE}/micPreamp", payload=envelope(payload))

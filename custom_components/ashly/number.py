@@ -80,8 +80,7 @@ class AshlyDVCALevelNumber(AshlyEntity, NumberEntity):
     _attr_icon = "mdi:tune-vertical"
 
     def __init__(self, coordinator: AshlyCoordinator, index: int) -> None:
-        dvca_state = (coordinator.data.dvca.get(index)
-                      if coordinator.data is not None else None)
+        dvca_state = coordinator.data.dvca.get(index) if coordinator.data is not None else None
         name = dvca_state.name if dvca_state else f"DCA {index}"
         super().__init__(
             coordinator,
@@ -101,11 +100,7 @@ class AshlyDVCALevelNumber(AshlyEntity, NumberEntity):
     @property
     def available(self) -> bool:
         data = self.coordinator.data
-        return (
-            super().available
-            and data is not None
-            and self._index in data.dvca
-        )
+        return super().available and data is not None and self._index in data.dvca
 
     async def async_set_native_value(self, value: float) -> None:
         clamped = _clamp(value, self._attr_native_min_value, self._attr_native_max_value)
@@ -125,9 +120,7 @@ class AshlyDVCALevelNumber(AshlyEntity, NumberEntity):
         if existing is None:
             return
         dvca[self._index] = dataclasses.replace(existing, level_db=level_db)
-        self.coordinator.async_set_updated_data(
-            dataclasses.replace(data, dvca=dvca)
-        )
+        self.coordinator.async_set_updated_data(dataclasses.replace(data, dvca=dvca))
 
 
 # ── Mixer crosspoint source level ──────────────────────────────────────
@@ -175,11 +168,7 @@ class AshlyCrosspointLevelNumber(AshlyEntity, NumberEntity):
     @property
     def available(self) -> bool:
         data = self.coordinator.data
-        return (
-            super().available
-            and data is not None
-            and self._key in data.crosspoints
-        )
+        return super().available and data is not None and self._key in data.crosspoints
 
     async def async_set_native_value(self, value: float) -> None:
         clamped = _clamp(value, self._attr_native_min_value, self._attr_native_max_value)
@@ -201,9 +190,7 @@ class AshlyCrosspointLevelNumber(AshlyEntity, NumberEntity):
         if existing is None:
             return
         crosspoints[self._key] = dataclasses.replace(existing, level_db=level_db)
-        self.coordinator.async_set_updated_data(
-            dataclasses.replace(data, crosspoints=crosspoints)
-        )
+        self.coordinator.async_set_updated_data(dataclasses.replace(data, crosspoints=crosspoints))
 
 
 # ── Mic preamp gain (per mic input) ────────────────────────────────────
@@ -241,11 +228,7 @@ class AshlyMicPreampGainNumber(AshlyEntity, NumberEntity):
     @property
     def available(self) -> bool:
         data = self.coordinator.data
-        return (
-            super().available
-            and data is not None
-            and self._input in data.mic_preamp_gain
-        )
+        return super().available and data is not None and self._input in data.mic_preamp_gain
 
     async def async_set_native_value(self, value: float) -> None:
         # Snap to the nearest 6 dB step the device accepts.
@@ -265,6 +248,4 @@ class AshlyMicPreampGainNumber(AshlyEntity, NumberEntity):
             return
         gains = dict(data.mic_preamp_gain)
         gains[self._input] = gain_db
-        self.coordinator.async_set_updated_data(
-            dataclasses.replace(data, mic_preamp_gain=gains)
-        )
+        self.coordinator.async_set_updated_data(dataclasses.replace(data, mic_preamp_gain=gains))

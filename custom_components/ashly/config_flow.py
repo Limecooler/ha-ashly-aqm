@@ -46,9 +46,7 @@ _LOGGER = logging.getLogger(__name__)
 
 USER_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_HOST): TextSelector(
-            TextSelectorConfig(type=TextSelectorType.TEXT)
-        ),
+        vol.Required(CONF_HOST): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
         vol.Optional(CONF_PORT, default=DEFAULT_PORT): NumberSelector(
             NumberSelectorConfig(min=1, max=65535, mode=NumberSelectorMode.BOX)
         ),
@@ -63,9 +61,7 @@ USER_SCHEMA = vol.Schema(
 
 REAUTH_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_USERNAME): TextSelector(
-            TextSelectorConfig(type=TextSelectorType.TEXT)
-        ),
+        vol.Required(CONF_USERNAME): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
         vol.Required(CONF_PASSWORD): TextSelector(
             TextSelectorConfig(type=TextSelectorType.PASSWORD)
         ),
@@ -96,9 +92,7 @@ async def _validate_connection(
     Uses an HA-managed session with its own cookie jar so the device's
     session cookie does not leak into HA's shared session.
     """
-    session = async_create_clientsession(
-        hass, cookie_jar=aiohttp.CookieJar(unsafe=True)
-    )
+    session = async_create_clientsession(hass, cookie_jar=aiohttp.CookieJar(unsafe=True))
     client = AshlyClient(
         host=host,
         port=port,
@@ -129,9 +123,7 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
 
     # ── Manual entry ────────────────────────────────────────────────
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
@@ -156,19 +148,13 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
                     mac = format_mac(info.mac_address)
                     await self.async_set_unique_id(mac)
                     self._abort_if_unique_id_configured()
-                    return self.async_create_entry(
-                        title=_entry_title(info), data=user_input
-                    )
+                    return self.async_create_entry(title=_entry_title(info), data=user_input)
 
-        return self.async_show_form(
-            step_id="user", data_schema=USER_SCHEMA, errors=errors
-        )
+        return self.async_show_form(step_id="user", data_schema=USER_SCHEMA, errors=errors)
 
     # ── DHCP discovery ──────────────────────────────────────────────
 
-    async def async_step_dhcp(
-        self, discovery_info: DhcpServiceInfo
-    ) -> ConfigFlowResult:
+    async def async_step_dhcp(self, discovery_info: DhcpServiceInfo) -> ConfigFlowResult:
         # Normalise the MAC (HA may pass colon, hyphen, or compact forms)
         # before the OUI prefix check.
         try:
@@ -188,9 +174,7 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
         if "_" in hostname:
             self._discovered_model = hostname.split("_")[0].upper()
 
-        self.context["title_placeholders"] = {
-            "name": f"Ashly {self._discovered_model or 'Audio'}"
-        }
+        self.context["title_placeholders"] = {"name": f"Ashly {self._discovered_model or 'Audio'}"}
         return await self.async_step_discovery_confirm()
 
     async def async_step_discovery_confirm(
@@ -244,9 +228,7 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
 
     # ── Re-authentication ───────────────────────────────────────────
 
-    async def async_step_reauth(
-        self, entry_data: dict[str, Any]
-    ) -> ConfigFlowResult:
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
@@ -343,9 +325,7 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_PASSWORD: reconfigure_entry.data.get(CONF_PASSWORD, DEFAULT_PASSWORD),
         }
         schema = self.add_suggested_values_to_schema(USER_SCHEMA, suggested)
-        return self.async_show_form(
-            step_id="reconfigure", data_schema=schema, errors=errors
-        )
+        return self.async_show_form(step_id="reconfigure", data_schema=schema, errors=errors)
 
     # ── Options ─────────────────────────────────────────────────────
 
@@ -357,21 +337,15 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
 class AshlyOptionsFlow(OptionsFlow):
     """Options flow for the Ashly integration."""
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
             return self.async_create_entry(data=user_input)
 
-        current_interval = self.config_entry.options.get(
-            "poll_interval", DEFAULT_SCAN_INTERVAL
-        )
+        current_interval = self.config_entry.options.get("poll_interval", DEFAULT_SCAN_INTERVAL)
         schema = vol.Schema(
             {
                 vol.Optional("poll_interval", default=current_interval): NumberSelector(
-                    NumberSelectorConfig(
-                        min=5, max=300, step=5, mode=NumberSelectorMode.SLIDER
-                    )
+                    NumberSelectorConfig(min=5, max=300, step=5, mode=NumberSelectorMode.SLIDER)
                 ),
             }
         )

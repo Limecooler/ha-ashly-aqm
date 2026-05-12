@@ -18,9 +18,7 @@ from custom_components.ashly.coordinator import AshlyCoordinator
 
 
 @pytest.fixture
-def coordinator(
-    hass: HomeAssistant, mock_client: AsyncMock, mock_config_entry
-) -> AshlyCoordinator:
+def coordinator(hass: HomeAssistant, mock_client: AsyncMock, mock_config_entry) -> AshlyCoordinator:
     mock_config_entry.add_to_hass(hass)
     return AshlyCoordinator(hass, mock_client, mock_config_entry)
 
@@ -104,9 +102,7 @@ async def test_setup_no_mac_raises_update_failed(coordinator, mock_client):
         await coordinator._async_setup()
 
 
-async def test_update_auth_with_concurrent_connection_does_not_escalate(
-    coordinator, mock_client
-):
+async def test_update_auth_with_concurrent_connection_does_not_escalate(coordinator, mock_client):
     """If one endpoint auth-fails but another connection-fails, treat as a
     transient outage (UpdateFailed), not a credential problem."""
     await coordinator._async_setup()
@@ -116,9 +112,7 @@ async def test_update_auth_with_concurrent_connection_does_not_escalate(
         await coordinator._async_update_data()
 
 
-async def test_update_preset_connection_error_reuses_last_value(
-    coordinator, mock_client
-):
+async def test_update_preset_connection_error_reuses_last_value(coordinator, mock_client):
     """A transient preset-endpoint failure should not tank the whole poll."""
     await coordinator._async_setup()
     # First poll succeeds; second poll loses presets.

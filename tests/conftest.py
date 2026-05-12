@@ -97,9 +97,7 @@ def mock_dvca() -> dict[int, DVCAState]:
 @pytest.fixture
 def mock_crosspoints() -> dict[tuple[int, int], CrosspointState]:
     return {
-        (m, i): CrosspointState(
-            mixer_index=m, input_index=i, level_db=0.0, muted=True
-        )
+        (m, i): CrosspointState(mixer_index=m, input_index=i, level_db=0.0, muted=True)
         for m in range(1, NUM_MIXERS + 1)
         for i in range(1, NUM_INPUTS + 1)
     }

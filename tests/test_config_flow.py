@@ -42,9 +42,7 @@ USER_INPUT = {
 @pytest.fixture(autouse=True)
 def _bypass_setup_entry():
     """Skip the heavy async_setup_entry path during config-flow tests."""
-    with patch(
-        "custom_components.ashly.async_setup_entry", return_value=True
-    ):
+    with patch("custom_components.ashly.async_setup_entry", return_value=True):
         yield
 
 
@@ -62,9 +60,7 @@ async def test_user_flow_success(hass: HomeAssistant) -> None:
         "custom_components.ashly.config_flow._validate_connection",
         return_value=VALID_INFO,
     ):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], USER_INPUT
-        )
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], USER_INPUT)
         await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -88,9 +84,7 @@ async def test_user_flow_errors(hass: HomeAssistant, exc, error) -> None:
         "custom_components.ashly.config_flow._validate_connection",
         side_effect=exc,
     ):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], USER_INPUT
-        )
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], USER_INPUT)
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": error}
 
@@ -111,9 +105,7 @@ async def test_user_flow_no_mac_aborts(hass: HomeAssistant) -> None:
         "custom_components.ashly.config_flow._validate_connection",
         return_value=no_mac,
     ):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], USER_INPUT
-        )
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], USER_INPUT)
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "no_mac"}
 

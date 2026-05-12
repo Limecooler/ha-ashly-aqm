@@ -14,9 +14,7 @@ async def test_identify_button_press_calls_client(mock_coordinator):
     mock_coordinator.client.async_identify.assert_awaited_once()
 
 
-async def test_async_setup_entry_registers_one_button(
-    hass, mock_config_entry, mock_coordinator
-):
+async def test_async_setup_entry_registers_one_button(hass, mock_config_entry, mock_coordinator):
     from custom_components.ashly import button
 
     mock_config_entry.runtime_data = type(
