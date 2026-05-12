@@ -164,7 +164,7 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
         # before the OUI prefix check.
         try:
             mac = format_mac(discovery_info.macaddress)
-        except (TypeError, ValueError):
+        except (AttributeError, TypeError, ValueError):
             return self.async_abort(reason="not_ashly_device")
         if not mac.replace(":", "").upper().startswith(ASHLY_MAC_PREFIX):
             return self.async_abort(reason="not_ashly_device")

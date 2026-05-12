@@ -155,11 +155,11 @@ async def test_setup_clears_repair_when_credentials_non_default(
 
     from custom_components.ashly.const import DOMAIN
 
+    mock_config_entry.add_to_hass(hass)
     hass.config_entries.async_update_entry(
         mock_config_entry,
         data={**mock_config_entry.data, CONF_USERNAME: "alice", CONF_PASSWORD: "hunter2"},
     )
-    mock_config_entry.add_to_hass(hass)
     issue_id = f"default_credentials_{mock_config_entry.entry_id}"
     # Pre-create the issue to verify it gets cleared.
     ir.async_create_issue(
@@ -184,11 +184,11 @@ async def test_invalid_poll_interval_falls_back_to_default(
 
     from custom_components.ashly.const import DEFAULT_SCAN_INTERVAL
 
+    mock_config_entry.add_to_hass(hass)
     hass.config_entries.async_update_entry(
         mock_config_entry,
         options={"poll_interval": "not-a-number"},
     )
-    mock_config_entry.add_to_hass(hass)
     coord = AshlyCoordinator(hass, mock_client, mock_config_entry)
     assert coord.update_interval == timedelta(seconds=DEFAULT_SCAN_INTERVAL)
 
