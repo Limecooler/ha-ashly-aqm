@@ -1,0 +1,18 @@
+recall_preset:
+  name: Recall preset
+  description: >
+    Load a stored preset on an Ashly AQM device. The device's working
+    settings are overwritten with the preset's saved state.
+  target:
+    device:
+      integration: ashly
+  fields:
+    preset:
+      name: Preset
+      description: >
+        Name of the preset to recall, or a 1-based numeric index into the
+        device's preset list (e.g. "1" for the first preset).
+      required: true
+      example: "Evening Mode"
+      selector:
+        text:

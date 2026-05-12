@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.venv-system/
+venv/
+.env
+
+# Editor / local tooling
+.claude/
+.vscode/
+.idea/
+
+# Vendor PDFs (Ashly Audio copyrighted manuals — kept locally only)
+docs/*.pdf

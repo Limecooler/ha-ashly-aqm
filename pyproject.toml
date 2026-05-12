@@ -1,0 +1,26 @@
+[project]
+name = "ha-ashly-aqm"
+version = "0.1.0"
+description = "Home Assistant integration for Ashly Audio AQM series zone mixers"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+  "integration: live-device tests that require ASHLY_HOST env var; opt in with 'pytest -m integration'",
+]
+# Exclude integration tests by default; opt in with `-m integration`.
+addopts = "-m 'not integration'"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true

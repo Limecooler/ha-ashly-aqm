@@ -1,0 +1,19 @@
+{
+  "domain": "ashly",
+  "name": "Ashly Audio",
+  "codeowners": ["@Limecooler"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/limecooler/ha-ashly-aqm",
+  "dhcp": [
+    { "macaddress": "0014AA*" },
+    { "registered_devices": true }
+  ],
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/limecooler/ha-ashly-aqm/issues",
+  "loggers": ["custom_components.ashly"],
+  "quality_scale": "silver",
+  "requirements": ["python-socketio[asyncio_client]>=5.10"],
+  "version": "0.3.0"
+}

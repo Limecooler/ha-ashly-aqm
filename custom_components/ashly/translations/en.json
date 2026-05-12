@@ -1,0 +1,112 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Ashly Device",
+        "description": "Enter the connection details for your Ashly audio processor.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "username": "Username",
+          "password": "Password"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the device",
+          "port": "API port (default 8000)",
+          "username": "Device username (default: admin)",
+          "password": "Device password (default: secret)"
+        }
+      },
+      "discovery_confirm": {
+        "title": "Ashly Device Discovered",
+        "description": "An Ashly {model} was found at {host}. Enter credentials to complete setup.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "description": "Authentication failed for {name}. Please enter updated credentials.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Ashly Device",
+        "description": "Update connection settings for your Ashly device.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "username": "Username",
+          "password": "Password"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the device",
+          "port": "API port (default 8000)",
+          "username": "Device username (default: admin)",
+          "password": "Device password (default: secret)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the device. Verify the IP address and that the device is powered on.",
+      "invalid_auth": "Authentication failed. Check your username and password (defaults: admin / secret).",
+      "no_mac": "Could not retrieve a MAC address from the device — required to register it uniquely.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "reauth_successful": "Re-authentication was successful.",
+      "reconfigure_successful": "Reconfiguration was successful.",
+      "unique_id_mismatch": "The device at this address is different from the one originally configured.",
+      "not_ashly_device": "The discovered device is not an Ashly audio processor."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Ashly Audio Options",
+        "data": {
+          "poll_interval": "Polling interval (seconds)"
+        },
+        "data_description": {
+          "poll_interval": "How often to poll the device for state changes (5-300 seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "switch": {
+      "device_power": {
+        "name": "Power"
+      },
+      "input_channel_mute": {
+        "name": "Input {channel_number} mute"
+      },
+      "output_channel_mute": {
+        "name": "Output {channel_number} mute"
+      },
+      "dvca_mute": {
+        "name": "DCA {group_number} mute"
+      },
+      "crosspoint_mute": {
+        "name": "Mixer {mixer_number} input {input_number} mute"
+      }
+    },
+    "number": {
+      "dvca_level": {
+        "name": "DCA {group_number} level"
+      },
+      "crosspoint_level": {
+        "name": "Mixer {mixer_number} input {input_number} level"
+      }
+    },
+    "select": {
+      "output_mixer": {
+        "name": "Output {output_number} mixer"
+      }
+    }
+  }
+}
