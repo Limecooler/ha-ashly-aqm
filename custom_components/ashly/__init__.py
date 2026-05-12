@@ -6,6 +6,7 @@ import aiohttp
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .client import AshlyAuthError, AshlyClient, AshlyConnectionError
@@ -90,6 +91,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: AshlyConfigEntry) -> bo
         meter_client = entry.runtime_data.meter_client
         if meter_client is not None:
             await meter_client.async_stop()
+        # Clear any repair issues this entry raised so they don't outlive it.
+        ir.async_delete_issue(hass, DOMAIN, f"default_credentials_{entry.entry_id}")
         # Drop services when no other Ashly entries remain.
         remaining = [
             e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id != entry.entry_id

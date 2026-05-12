@@ -98,6 +98,90 @@ state, and authentication credentials remain untouched.
 
 ---
 
+## Use cases
+
+Concrete things people actually do with this integration:
+
+- **Zone paging from automations** — Trigger an Apple Music / Sonos /
+  TTS announcement, then use a `switch.turn_off` on the relevant chain
+  mute switches to unmute the corresponding zones for the duration of
+  the announcement, then re-mute.
+- **Time-of-day preset recall** — Use the `ashly.recall_preset` service
+  on an HA scheduler (e.g. `time_pattern` trigger or Schedule helper) to
+  switch the venue from "Lunch", "Happy Hour", "Evening", "Late Night"
+  presets without anyone touching the rack.
+- **Meeting-room "default state"** — A single tap on a Lutron / Hue /
+  Z-Wave keypad recalls a preset that mutes mics, drops zone levels,
+  and reassigns mixer routing — all via one service call.
+- **Phantom-power safety interlock** — Wire a `switch.turn_off` on the
+  `phantom_power_*` switches into an automation that fires when any
+  channel mute changes to `off` outside of business hours, to avoid the
+  classic "pop" when a mic is hot-plugged.
+- **Live-meter dashboard** — Enable a handful of the disabled-by-default
+  meter sensors and put them on a Lovelace gauge / history graph for an
+  at-a-glance health view of the room's audio chain.
+- **Preset-recall notification** — Use the **Last recalled preset**
+  sensor as a trigger to push a notification ("the system was switched
+  to 'Sound Check' at 14:32") to the AV operator's phone.
+
+---
+
+## How data is refreshed
+
+The integration uses two complementary update paths:
+
+1. **REST polling (most state).** A `DataUpdateCoordinator` polls the
+   device's REST API on the configured interval (default 30 s; 5–300 s
+   via the integration options). One poll fetches the front panel,
+   chain state, DCA state, crosspoints, presets, phantom-power state,
+   mic-preamp gains, GPO state, and last-recalled preset — concurrently.
+   Entities go `unavailable` when the poll fails and recover on the next
+   successful poll, with a single log line per transition.
+
+2. **Live socket.io stream (meters only).** The 24 channel-meter
+   sensors are pushed from the device over a long-lived socket.io 4.x
+   connection on a separate port. Updates fire at roughly 1 Hz when a
+   channel has signal; the sensors are disabled by default to keep the
+   recorder DB sane.
+
+Optimistic updates: when you toggle a mute or change a level via HA,
+the integration applies the change locally first and then writes to the
+device, so the UI feels instant. The next poll reconciles state in case
+the write didn't actually land.
+
+---
+
+## Known limitations
+
+- **Supported models.** Only the AQM1208 (12-in / 8-out) and AQM408
+  (8-in / 8-out) are tested. The integration may work on other AQM-
+  family devices that expose the same AquaControl REST API but the
+  default entity counts assume 12 inputs / 8 outputs / 8 mixers — open
+  an issue with a diagnostic dump if you have a different model.
+- **Reachable port.** The device must be reachable on the configured
+  port (default 8000) for both the REST poll and config flow, and on
+  port 8001 for the meter socket.io stream. There's no UDP discovery
+  beyond DHCP MAC-prefix sniffing (`00:14:AA:*`).
+- **No firmware update from HA.** This integration does not push
+  firmware to the device. Updates are done from Ashly's standalone
+  AquaControl Portal.
+- **Crosspoint mutes/levels are disabled by default.** 96 of each per
+  AQM1208 would flood the default UI; enable per-mixer or per-input as
+  needed from the entity-settings page.
+- **Channel meter sensors are disabled by default and not recorded in
+  long-term statistics.** They're meant for live dashboards, not
+  historical analysis (the value range is signal level, not acoustic
+  SPL — `device_class` is intentionally unset).
+- **macOS Tahoe (15) Local Network Privacy can silently drop traffic
+  from Homebrew Python.** This affects developers running the test
+  suite, not production HA installs. See the Troubleshooting section.
+- **Cookie-auth sessions can expire** if the device reboots or its
+  clock skews dramatically. The client transparently re-authenticates;
+  if the configured password has actually changed on the device,
+  HA's reauth flow kicks in and prompts for new credentials.
+
+---
+
 ## Configuration
 
 ### Setup form

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 import voluptuous as vol
@@ -26,15 +26,15 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-try:
+if TYPE_CHECKING:
+    # mypy only sees the new HA 2026.2+ location; the runtime fallback below
+    # is invisible to typing.
     from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
-except ImportError:  # HA < 2026.2
-    # mypy on modern HA sees this branch as a re-import of a now-private name;
-    # ignore both signals — the runtime fallback is only entered on older HA
-    # where `_DhcpServiceInfo` doesn't exist.
-    from homeassistant.components.dhcp import (  # type: ignore[no-redef,attr-defined]
-        DhcpServiceInfo,
-    )
+else:
+    try:
+        from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
+    except ImportError:  # HA < 2026.2
+        from homeassistant.components.dhcp import DhcpServiceInfo
 
 from .client import AshlyAuthError, AshlyClient, AshlyConnectionError, SystemInfo
 from .const import (

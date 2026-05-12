@@ -10,8 +10,10 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -29,7 +31,7 @@ from .client import (
     PresetInfo,
     SystemInfo,
 )
-from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
+from .const import DEFAULT_PASSWORD, DEFAULT_SCAN_INTERVAL, DEFAULT_USERNAME, DOMAIN
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -158,6 +160,33 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
 
         self.system_info = system_info
         self._channels = {c.channel_id: c for c in channels}
+        self._evaluate_repair_issues()
+
+    def _evaluate_repair_issues(self) -> None:
+        """Create or clear actionable repair issues based on entry state.
+
+        Currently flags: factory-default device credentials still in use, which
+        is a security concern on a networked audio device. The issue clears
+        automatically when the user reconfigures with non-default credentials.
+        """
+        issue_id = f"default_credentials_{self.config_entry.entry_id}"
+        data = self.config_entry.data
+        is_default = (
+            data.get(CONF_USERNAME, DEFAULT_USERNAME) == DEFAULT_USERNAME
+            and data.get(CONF_PASSWORD, DEFAULT_PASSWORD) == DEFAULT_PASSWORD
+        )
+        if is_default:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="default_credentials",
+                translation_placeholders={"host": self.client.host},
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
 
     @property
     def channels(self) -> dict[str, DSPChannel]:
