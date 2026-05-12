@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 from custom_components.ashly.sensor import (
     AshlyChannelMeterSensor,
     AshlyFirmwareSensor,
@@ -124,3 +126,61 @@ async def test_meter_sensor_available_does_not_flap_on_disconnect(mock_coordinat
     s = AshlyChannelMeterSensor(mock_coordinator, flaky_meter, kind="input", channel=1)
     # Should still be available (cached state is meaningful even if WS is reconnecting).
     assert s.available is True
+
+
+# ── no-data branches ───────────────────────────────────────────────────
+
+
+async def test_preset_count_attrs_no_data(mock_coordinator):
+    """extra_state_attributes returns empty dict when coordinator has no data."""
+    s = AshlyPresetCountSensor(mock_coordinator)
+    mock_coordinator.data = None
+    assert s.extra_state_attributes == {}
+
+
+async def test_last_recalled_native_value_no_data(mock_coordinator):
+    s = AshlyLastRecalledPresetSensor(mock_coordinator)
+    mock_coordinator.data = None
+    assert s.native_value is None
+
+
+async def test_last_recalled_attrs_no_data(mock_coordinator):
+    s = AshlyLastRecalledPresetSensor(mock_coordinator)
+    mock_coordinator.data = None
+    assert s.extra_state_attributes == {}
+
+
+async def test_meter_sensor_on_update_short_records_returns(mock_coordinator, mock_meter_client):
+    """_on_meter_update silently returns when the meter index is past the array."""
+    s = AshlyChannelMeterSensor(mock_coordinator, mock_meter_client, kind="mixer", channel=12)
+    # _meter_index = NUM_INPUTS + 11 = 23 for mixer ch 12
+    s.async_write_ha_state = lambda: None
+    s._cached_db = -60.0
+    s._on_meter_update([0, 0, 0])  # records too short for index 23
+    # cached_db should be unchanged
+    assert s.native_value == -60.0
+
+
+async def test_meter_sensor_async_added_to_hass_seeds_from_buffer(
+    mock_coordinator,
+):
+    """async_added_to_hass seeds _cached_db from any buffered records."""
+    seeded_meter = MagicMock()
+    seeded_meter.connected = True
+    seeded_meter.latest_records = [60] + [0] * 95  # raw 60 → 0 dBu
+    remove = MagicMock()
+    seeded_meter.add_listener = MagicMock(return_value=remove)
+
+    s = AshlyChannelMeterSensor(mock_coordinator, seeded_meter, kind="input", channel=1)
+    s.async_on_remove = MagicMock()
+    # Patch the CoordinatorEntity base async_added_to_hass that would otherwise
+    # touch internal HA registries during this unit test.
+    with patch(
+        "homeassistant.helpers.update_coordinator.CoordinatorEntity.async_added_to_hass",
+        new=AsyncMock(),
+    ):
+        await s.async_added_to_hass()
+    # Should have seeded from buffer
+    assert s.native_value == 0.0
+    # Should have registered a listener via add_listener
+    seeded_meter.add_listener.assert_called_once()

@@ -132,6 +132,77 @@ async def test_update_preset_api_error_still_fails_loudly(coordinator, mock_clie
         await coordinator._async_update_data()
 
 
+async def test_setup_repair_issue_for_default_credentials(coordinator):
+    """When the entry uses admin/secret, _async_setup creates a repair issue."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.ashly.const import DOMAIN
+
+    await coordinator._async_setup()
+    issue_reg = ir.async_get(coordinator.hass)
+    issue_id = f"default_credentials_{coordinator.config_entry.entry_id}"
+    issue = issue_reg.async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.severity == ir.IssueSeverity.WARNING
+
+
+async def test_setup_clears_repair_when_credentials_non_default(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """Non-default credentials must remove any existing repair issue."""
+    from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.ashly.const import DOMAIN
+
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={**mock_config_entry.data, CONF_USERNAME: "alice", CONF_PASSWORD: "hunter2"},
+    )
+    mock_config_entry.add_to_hass(hass)
+    issue_id = f"default_credentials_{mock_config_entry.entry_id}"
+    # Pre-create the issue to verify it gets cleared.
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="default_credentials",
+    )
+    coordinator = AshlyCoordinator(hass, mock_client, mock_config_entry)
+    await coordinator._async_setup()
+    issue_reg = ir.async_get(hass)
+    assert issue_reg.async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_invalid_poll_interval_falls_back_to_default(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """A non-integer poll_interval option falls back to DEFAULT_SCAN_INTERVAL."""
+    from datetime import timedelta
+
+    from custom_components.ashly.const import DEFAULT_SCAN_INTERVAL
+
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options={"poll_interval": "not-a-number"},
+    )
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry)
+    assert coord.update_interval == timedelta(seconds=DEFAULT_SCAN_INTERVAL)
+
+
+async def test_update_critical_endpoint_generic_exception_raises_update_failed(
+    coordinator, mock_client
+):
+    """Anything raised by a critical endpoint becomes UpdateFailed."""
+    await coordinator._async_setup()
+    mock_client.async_get_front_panel.side_effect = RuntimeError("unexpected")
+    with pytest.raises(UpdateFailed):
+        await coordinator._async_update_data()
+
+
 async def test_apply_patch_noop_when_data_none(coordinator):
     """apply_patch must not crash when first refresh hasn't completed yet."""
     coordinator.data = None
