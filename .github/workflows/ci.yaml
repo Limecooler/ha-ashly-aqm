@@ -40,5 +40,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pytest-homeassistant-custom-component==0.13.205 'python-socketio[asyncio_client]>=5.10'
+      - run: pip install pytest-homeassistant-custom-component aioresponses 'python-socketio[asyncio_client]>=5.10'
       - run: pytest tests/ -v --tb=short
