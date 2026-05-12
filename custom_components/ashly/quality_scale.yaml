@@ -32,10 +32,9 @@ rules:
   test-coverage:
     status: todo
     comment: |
-      Pytest-cov was just wired into CI with a floor of 80%. Once the actual
-      number is reported, ratchet up to >=95% per Silver requirement. Likely
-      gaps are around meter.py (socket.io reconnect paths) and config_flow.py
-      DHCP-discovery edge cases.
+      Currently 82.82% (CI run 25757470416). Silver requires >=95%. Likely
+      gaps: meter.py socket.io reconnect paths, config_flow.py DHCP edge
+      cases, coordinator.py failure-path branches, client.py error branches.
 
   # Gold ──────────────────────────────────────────────────────────────────
   devices: done
