@@ -3,10 +3,14 @@ recall_preset:
   description: >
     Load a stored preset on an Ashly AQM device. The device's working
     settings are overwritten with the preset's saved state.
-  target:
-    device:
-      - integration: ashly
   fields:
+    device_id:
+      name: Device
+      description: Ashly device to recall the preset on.
+      required: true
+      selector:
+        device:
+          integration: ashly
     preset:
       name: Preset
       description: >
