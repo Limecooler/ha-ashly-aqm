@@ -203,6 +203,36 @@ async def test_update_critical_endpoint_generic_exception_raises_update_failed(
         await coordinator._async_update_data()
 
 
+async def test_apply_patch_replaces_data(coordinator):
+    """When data is set, apply_patch invokes async_set_updated_data."""
+    from unittest.mock import MagicMock
+
+    await coordinator._async_setup()
+    await coordinator._async_update_data()
+    coordinator.data = await coordinator._async_update_data()
+    coordinator.async_set_updated_data = MagicMock()
+    # Use a real field name from the dataclass.
+    coordinator.apply_patch(presets=[])
+    coordinator.async_set_updated_data.assert_called_once()
+    pushed = coordinator.async_set_updated_data.call_args.args[0]
+    assert pushed.presets == []
+
+
+async def test_update_propagates_base_exception(coordinator, mock_client):
+    """A BaseException (like CancelledError) returned by gather propagates intact."""
+    await coordinator._async_setup()
+    # Make one of the gathered awaitables raise CancelledError, which gather
+    # captures into the results array as a non-Exception BaseException.
+    import asyncio
+
+    async def raise_cancelled():
+        raise asyncio.CancelledError()
+
+    mock_client.async_get_front_panel.side_effect = raise_cancelled
+    with pytest.raises(asyncio.CancelledError):
+        await coordinator._async_update_data()
+
+
 async def test_apply_patch_noop_when_data_none(coordinator):
     """apply_patch must not crash when first refresh hasn't completed yet."""
     coordinator.data = None
