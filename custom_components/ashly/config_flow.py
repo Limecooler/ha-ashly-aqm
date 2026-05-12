@@ -29,7 +29,12 @@ from homeassistant.helpers.selector import (
 try:
     from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
 except ImportError:  # HA < 2026.2
-    from homeassistant.components.dhcp import DhcpServiceInfo
+    # mypy on modern HA sees this branch as a re-import of a now-private name;
+    # ignore both signals — the runtime fallback is only entered on older HA
+    # where `_DhcpServiceInfo` doesn't exist.
+    from homeassistant.components.dhcp import (  # type: ignore[no-redef,attr-defined]
+        DhcpServiceInfo,
+    )
 
 from .client import AshlyAuthError, AshlyClient, AshlyConnectionError, SystemInfo
 from .const import (
