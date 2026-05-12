@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import dataclasses
 
+import pytest
+from homeassistant.exceptions import HomeAssistantError
+
+from custom_components.ashly.client import AshlyApiError
 from custom_components.ashly.number import (
     AshlyCrosspointLevelNumber,
     AshlyDVCALevelNumber,
@@ -124,3 +128,81 @@ async def test_mic_preamp_unavailable_when_missing(mock_coordinator):
     mock_coordinator.data = dataclasses.replace(mock_coordinator.data, mic_preamp_gain=gains)
     n = AshlyMicPreampGainNumber(mock_coordinator, 2)
     assert n.available is False
+
+
+# ── Error paths ────────────────────────────────────────────────────────
+
+
+async def test_dvca_level_client_error_raises(mock_coordinator):
+    mock_coordinator.client.async_set_dvca_level.side_effect = AshlyApiError("err")
+    n = AshlyDVCALevelNumber(mock_coordinator, 1)
+    with pytest.raises(HomeAssistantError):
+        await n.async_set_native_value(-3.0)
+
+
+async def test_crosspoint_level_client_error_raises(mock_coordinator):
+    mock_coordinator.client.async_set_crosspoint_level.side_effect = AshlyApiError("err")
+    n = AshlyCrosspointLevelNumber(mock_coordinator, 1, 1)
+    with pytest.raises(HomeAssistantError):
+        await n.async_set_native_value(-3.0)
+
+
+async def test_mic_preamp_client_error_raises(mock_coordinator):
+    mock_coordinator.client.async_set_mic_preamp.side_effect = AshlyApiError("err")
+    n = AshlyMicPreampGainNumber(mock_coordinator, 1)
+    with pytest.raises(HomeAssistantError):
+        await n.async_set_native_value(12)
+
+
+# ── _push_optimistic + native_value when data=None ─────────────────────
+
+
+async def test_dvca_push_optimistic_no_data_noop(mock_coordinator):
+    n = AshlyDVCALevelNumber(mock_coordinator, 1)
+    mock_coordinator.data = None
+    n._push_optimistic(-3.0)
+    mock_coordinator.async_set_updated_data.assert_not_called()
+
+
+async def test_dvca_push_optimistic_missing_index_noop(mock_coordinator):
+    n = AshlyDVCALevelNumber(mock_coordinator, 99)
+    n._push_optimistic(-3.0)
+    mock_coordinator.async_set_updated_data.assert_not_called()
+
+
+async def test_dvca_native_value_no_data(mock_coordinator):
+    n = AshlyDVCALevelNumber(mock_coordinator, 1)
+    mock_coordinator.data = None
+    assert n.native_value is None
+
+
+async def test_crosspoint_push_optimistic_no_data_noop(mock_coordinator):
+    n = AshlyCrosspointLevelNumber(mock_coordinator, 1, 1)
+    mock_coordinator.data = None
+    n._push_optimistic(-3.0)
+    mock_coordinator.async_set_updated_data.assert_not_called()
+
+
+async def test_crosspoint_push_optimistic_missing_key_noop(mock_coordinator):
+    n = AshlyCrosspointLevelNumber(mock_coordinator, 99, 99)
+    n._push_optimistic(-3.0)
+    mock_coordinator.async_set_updated_data.assert_not_called()
+
+
+async def test_crosspoint_native_value_no_data(mock_coordinator):
+    n = AshlyCrosspointLevelNumber(mock_coordinator, 1, 1)
+    mock_coordinator.data = None
+    assert n.native_value is None
+
+
+async def test_mic_preamp_push_optimistic_no_data_noop(mock_coordinator):
+    n = AshlyMicPreampGainNumber(mock_coordinator, 1)
+    mock_coordinator.data = None
+    n._push_optimistic(12)
+    mock_coordinator.async_set_updated_data.assert_not_called()
+
+
+async def test_mic_preamp_native_value_no_data(mock_coordinator):
+    n = AshlyMicPreampGainNumber(mock_coordinator, 1)
+    mock_coordinator.data = None
+    assert n.native_value is None

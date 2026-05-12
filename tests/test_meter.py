@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import aiohttp
 
 from custom_components.ashly.meter import (
@@ -181,3 +184,163 @@ async def test_async_stop_is_safe_to_call_twice():
     c = _make_client()
     await c.async_stop()
     await c.async_stop()  # no exception
+
+
+# ── socket.io run loop with mocked client ─────────────────────────────
+
+
+def _make_fake_sio_client() -> MagicMock:
+    """Build a stand-in for socketio.AsyncClient with the methods we exercise."""
+    sio = MagicMock()
+    sio.connect = AsyncMock()
+    sio.emit = AsyncMock()
+    sio.wait = AsyncMock()
+    sio.disconnect = AsyncMock()
+    sio.connected = True
+    sio.on = MagicMock(return_value=lambda fn: fn)
+    sio.eio = MagicMock()
+    sio.eio.external_http = False
+    return sio
+
+
+async def test_run_connects_and_subscribes():
+    """A successful _connect_and_stream calls connect, join, startMeters."""
+    sio = _make_fake_sio_client()
+    # Make sio.wait() block forever until cancelled (a real socket would too).
+    waiter: asyncio.Future = asyncio.get_event_loop().create_future()
+    sio.wait.side_effect = lambda: waiter
+
+    client = _make_client()
+    with patch("custom_components.ashly.meter.socketio.AsyncClient", return_value=sio):
+        task = asyncio.create_task(client._connect_and_stream())
+        # Give the task a moment to issue connect/emit calls.
+        for _ in range(20):
+            await asyncio.sleep(0.01)
+            if sio.emit.await_count >= 2:
+                break
+        # Trigger the stop event so the task can exit.
+        client._stop_event.set()
+        # Release the wait()
+        if not waiter.done():
+            waiter.set_result(None)
+        await asyncio.wait_for(task, timeout=2.0)
+
+    sio.connect.assert_awaited_once()
+    join_call = sio.emit.await_args_list[0]
+    start_call = sio.emit.await_args_list[1]
+    assert join_call.args == ("join", "Channel Meters")
+    assert start_call.args == ("startMeters",)
+
+
+async def test_run_loop_retries_on_connect_failure():
+    """If _connect_and_stream raises, _run logs and retries after backoff."""
+    client = _make_client()
+    call_count = {"n": 0}
+
+    async def fake_connect_and_stream() -> None:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("first attempt fails")
+        # Second attempt: simulate "stop event set" so the loop exits cleanly
+        # without an exception.
+        client._stop_event.set()
+
+    with (
+        patch.object(client, "_connect_and_stream", side_effect=fake_connect_and_stream),
+        patch("custom_components.ashly.meter._MIN_BACKOFF_S", 0.01),
+        patch("custom_components.ashly.meter._MAX_BACKOFF_S", 0.05),
+    ):
+        await asyncio.wait_for(client._run(), timeout=2.0)
+
+    assert call_count["n"] >= 2
+
+
+async def test_run_loop_resets_backoff_after_stable_uptime():
+    """A connection that stayed up long enough resets backoff to MIN."""
+    client = _make_client()
+    sequence = ["ok", "fail", "stop"]
+    seen = []
+
+    async def fake_connect_and_stream() -> None:
+        action = sequence[len(seen)]
+        seen.append(action)
+        if action == "ok":
+            # Sleep "past" the reset-dwell window via a patched value.
+            await asyncio.sleep(0.05)
+            return  # clean disconnect
+        if action == "fail":
+            raise RuntimeError("transient")
+        client._stop_event.set()
+
+    with (
+        patch.object(client, "_connect_and_stream", side_effect=fake_connect_and_stream),
+        patch("custom_components.ashly.meter._MIN_BACKOFF_S", 0.01),
+        patch("custom_components.ashly.meter._MAX_BACKOFF_S", 0.02),
+        patch("custom_components.ashly.meter._BACKOFF_RESET_DWELL_S", 0.01),
+    ):
+        await asyncio.wait_for(client._run(), timeout=2.0)
+    assert seen == ["ok", "fail", "stop"]
+
+
+async def test_async_start_is_idempotent_when_already_running():
+    """A second async_start while the task is alive is a no-op."""
+    client = _make_client()
+    # Patch _run with a coroutine that blocks until cancelled.
+
+    async def block_forever() -> None:
+        await asyncio.Event().wait()
+
+    with patch.object(client, "_run", side_effect=block_forever):
+        await client.async_start()
+        first_task = client._task
+        await client.async_start()  # should not start a second task
+        assert client._task is first_task
+        await client.async_stop()
+
+
+async def test_watchdog_warns_when_no_records(caplog):
+    """If no records arrive within the watchdog window, a WARNING is logged."""
+    import logging
+
+    client = _make_client()
+    caplog.set_level(logging.WARNING, logger="custom_components.ashly.meter")
+    with patch("custom_components.ashly.meter._FIRST_RECORD_WATCHDOG_S", 0.05):
+        await client._watchdog(initial_count=0)
+    assert any("no meter records received" in r.message for r in caplog.records)
+
+
+async def test_watchdog_silent_when_records_arrive(caplog):
+    """If records have grown past initial_count, watchdog stays quiet."""
+    import logging
+
+    client = _make_client()
+    client._latest_records = [1, 2, 3]
+    caplog.set_level(logging.WARNING, logger="custom_components.ashly.meter")
+    with patch("custom_components.ashly.meter._FIRST_RECORD_WATCHDOG_S", 0.05):
+        await client._watchdog(initial_count=0)
+    assert not any("no meter records received" in r.message for r in caplog.records)
+
+
+async def test_watchdog_cancelled_returns_silently(caplog):
+    """A cancelled watchdog must not warn."""
+    import logging
+
+    client = _make_client()
+    caplog.set_level(logging.WARNING, logger="custom_components.ashly.meter")
+    with patch("custom_components.ashly.meter._FIRST_RECORD_WATCHDOG_S", 5.0):
+        task = asyncio.create_task(client._watchdog(initial_count=0))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        # Task should exit without re-raising or logging.
+        await asyncio.wait_for(task, timeout=1.0)
+    assert not any("no meter records received" in r.message for r in caplog.records)
+
+
+async def test_connected_property_reflects_sio_state():
+    client = _make_client()
+    assert client.connected is False
+    client._sio = MagicMock()
+    client._sio.connected = True
+    assert client.connected is True
+    client._sio.connected = False
+    assert client.connected is False

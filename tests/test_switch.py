@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import dataclasses
 
+import pytest
+from homeassistant.exceptions import HomeAssistantError
+
+from custom_components.ashly.client import AshlyApiError
 from custom_components.ashly.switch import (
     AshlyChainMuteSwitch,
     AshlyCrosspointMuteSwitch,
@@ -204,3 +208,213 @@ async def test_gpo_unavailable_when_missing(mock_coordinator):
     mock_coordinator.data = dataclasses.replace(mock_coordinator.data, gpo=gpo)
     sw = AshlyGPOSwitch(mock_coordinator, 1)
     assert sw.available is False
+
+
+# ── Error paths: client raises → HomeAssistantError is raised ─────────
+
+
+async def test_power_turn_on_client_error_raises(mock_coordinator):
+    mock_coordinator.client.async_set_power.side_effect = AshlyApiError("nope")
+    sw = AshlyPowerSwitch(mock_coordinator)
+    with pytest.raises(HomeAssistantError):
+        await sw.async_turn_on()
+
+
+async def test_power_turn_off_client_error_raises(mock_coordinator):
+    mock_coordinator.client.async_set_power.side_effect = AshlyApiError("nope")
+    sw = AshlyPowerSwitch(mock_coordinator)
+    with pytest.raises(HomeAssistantError):
+        await sw.async_turn_off()
+
+
+async def test_chain_mute_turn_on_client_error(mock_coordinator):
+    mock_coordinator.client.async_set_chain_mute.side_effect = AshlyApiError("err")
+    sw = AshlyChainMuteSwitch(mock_coordinator, "InputChannel.1")
+    with pytest.raises(HomeAssistantError):
+        await sw.async_turn_on()
+
+
+async def test_chain_mute_turn_off_client_error(mock_coordinator):
+    mock_coordinator.client.async_set_chain_mute.side_effect = AshlyApiError("err")
+    sw = AshlyChainMuteSwitch(mock_coordinator, "InputChannel.1")
+    with pytest.raises(HomeAssistantError):
+        await sw.async_turn_off()
+
+
+async def test_dvca_mute_turn_on_client_error(mock_coordinator):
+    mock_coordinator.client.async_set_dvca_mute.side_effect = AshlyApiError("err")
+    sw = AshlyDVCAMuteSwitch(mock_coordinator, 1)
+    with pytest.raises(HomeAssistantError):
+        await sw.async_turn_on()
+
+
+async def test_dvca_mute_turn_off_client_error(mock_coordinator):
+    mock_coordinator.client.async_set_dvca_mute.side_effect = AshlyApiError("err")
+    sw = AshlyDVCAMuteSwitch(mock_coordinator, 1)
+    with pytest.raises(HomeAssistantError):
+        await sw.async_turn_off()
+
+
+async def test_crosspoint_mute_turn_on_client_error(mock_coordinator):
+    mock_coordinator.client.async_set_crosspoint_mute.side_effect = AshlyApiError("err")
+    sw = AshlyCrosspointMuteSwitch(mock_coordinator, 1, 1)
+    with pytest.raises(HomeAssistantError):
+        await sw.async_turn_on()
+
+
+async def test_crosspoint_mute_turn_off_client_error(mock_coordinator):
+    mock_coordinator.client.async_set_crosspoint_mute.side_effect = AshlyApiError("err")
+    sw = AshlyCrosspointMuteSwitch(mock_coordinator, 1, 1)
+    with pytest.raises(HomeAssistantError):
+        await sw.async_turn_off()
+
+
+async def test_front_panel_led_turn_on_client_error(mock_coordinator):
+    mock_coordinator.client.async_set_front_panel_leds.side_effect = AshlyApiError("err")
+    sw = AshlyFrontPanelLEDSwitch(mock_coordinator)
+    with pytest.raises(HomeAssistantError):
+        await sw.async_turn_on()
+
+
+async def test_front_panel_led_turn_off_client_error(mock_coordinator):
+    mock_coordinator.client.async_set_front_panel_leds.side_effect = AshlyApiError("err")
+    sw = AshlyFrontPanelLEDSwitch(mock_coordinator)
+    with pytest.raises(HomeAssistantError):
+        await sw.async_turn_off()
+
+
+async def test_phantom_power_turn_on_client_error(mock_coordinator):
+    mock_coordinator.client.async_set_phantom_power.side_effect = AshlyApiError("err")
+    sw = AshlyPhantomPowerSwitch(mock_coordinator, 1)
+    with pytest.raises(HomeAssistantError):
+        await sw.async_turn_on()
+
+
+async def test_phantom_power_turn_off_client_error(mock_coordinator):
+    mock_coordinator.client.async_set_phantom_power.side_effect = AshlyApiError("err")
+    sw = AshlyPhantomPowerSwitch(mock_coordinator, 1)
+    with pytest.raises(HomeAssistantError):
+        await sw.async_turn_off()
+
+
+async def test_gpo_turn_on_client_error(mock_coordinator):
+    mock_coordinator.client.async_set_gpo.side_effect = AshlyApiError("err")
+    sw = AshlyGPOSwitch(mock_coordinator, 1)
+    with pytest.raises(HomeAssistantError):
+        await sw.async_turn_on()
+
+
+async def test_gpo_turn_off_client_error(mock_coordinator):
+    mock_coordinator.client.async_set_gpo.side_effect = AshlyApiError("err")
+    sw = AshlyGPOSwitch(mock_coordinator, 1)
+    with pytest.raises(HomeAssistantError):
+        await sw.async_turn_off()
+
+
+# ── _push_optimistic when coordinator.data is None — must no-op ───────
+
+
+async def test_power_push_optimistic_no_data_is_noop(mock_coordinator):
+    sw = AshlyPowerSwitch(mock_coordinator)
+    mock_coordinator.data = None
+    sw._push_optimistic(True)  # should not crash
+    mock_coordinator.async_set_updated_data.assert_not_called()
+
+
+async def test_chain_mute_push_optimistic_no_data_is_noop(mock_coordinator):
+    sw = AshlyChainMuteSwitch(mock_coordinator, "InputChannel.1")
+    mock_coordinator.data = None
+    sw._push_optimistic(True)
+    mock_coordinator.async_set_updated_data.assert_not_called()
+
+
+async def test_chain_mute_push_optimistic_missing_chain_is_noop(mock_coordinator):
+    sw = AshlyChainMuteSwitch(mock_coordinator, "InputChannel.99")
+    sw._push_optimistic(True)
+    mock_coordinator.async_set_updated_data.assert_not_called()
+
+
+async def test_dvca_push_optimistic_no_data_is_noop(mock_coordinator):
+    sw = AshlyDVCAMuteSwitch(mock_coordinator, 1)
+    mock_coordinator.data = None
+    sw._push_optimistic(True)
+    mock_coordinator.async_set_updated_data.assert_not_called()
+
+
+async def test_dvca_push_optimistic_missing_index_is_noop(mock_coordinator):
+    sw = AshlyDVCAMuteSwitch(mock_coordinator, 99)
+    sw._push_optimistic(True)
+    mock_coordinator.async_set_updated_data.assert_not_called()
+
+
+async def test_crosspoint_push_optimistic_no_data_is_noop(mock_coordinator):
+    sw = AshlyCrosspointMuteSwitch(mock_coordinator, 1, 1)
+    mock_coordinator.data = None
+    sw._push_optimistic(True)
+    mock_coordinator.async_set_updated_data.assert_not_called()
+
+
+async def test_crosspoint_push_optimistic_missing_key_is_noop(mock_coordinator):
+    sw = AshlyCrosspointMuteSwitch(mock_coordinator, 99, 99)
+    sw._push_optimistic(True)
+    mock_coordinator.async_set_updated_data.assert_not_called()
+
+
+async def test_front_panel_push_optimistic_no_data_is_noop(mock_coordinator):
+    sw = AshlyFrontPanelLEDSwitch(mock_coordinator)
+    mock_coordinator.data = None
+    sw._push_optimistic(True)
+    mock_coordinator.async_set_updated_data.assert_not_called()
+
+
+async def test_phantom_power_push_optimistic_no_data_is_noop(mock_coordinator):
+    sw = AshlyPhantomPowerSwitch(mock_coordinator, 1)
+    mock_coordinator.data = None
+    sw._push_optimistic(True)
+    mock_coordinator.async_set_updated_data.assert_not_called()
+
+
+async def test_gpo_push_optimistic_no_data_is_noop(mock_coordinator):
+    sw = AshlyGPOSwitch(mock_coordinator, 1)
+    mock_coordinator.data = None
+    sw._push_optimistic(True)
+    mock_coordinator.async_set_updated_data.assert_not_called()
+
+
+# ── is_on / available data=None branches ───────────────────────────────
+
+
+async def test_chain_mute_is_on_no_data(mock_coordinator):
+    sw = AshlyChainMuteSwitch(mock_coordinator, "InputChannel.1")
+    mock_coordinator.data = None
+    assert sw.is_on is False
+
+
+async def test_dvca_is_on_no_data(mock_coordinator):
+    sw = AshlyDVCAMuteSwitch(mock_coordinator, 1)
+    mock_coordinator.data = None
+    assert sw.is_on is False
+
+
+async def test_crosspoint_is_on_no_data(mock_coordinator):
+    sw = AshlyCrosspointMuteSwitch(mock_coordinator, 1, 1)
+    mock_coordinator.data = None
+    assert sw.is_on is False
+
+
+async def test_front_panel_is_on_no_data(mock_coordinator):
+    sw = AshlyFrontPanelLEDSwitch(mock_coordinator)
+    mock_coordinator.data = None
+    assert sw.is_on is False
+
+
+async def test_phantom_power_is_on_no_data(mock_coordinator):
+    sw = AshlyPhantomPowerSwitch(mock_coordinator, 1)
+    mock_coordinator.data = None
+    assert sw.is_on is False
+
+
+async def test_gpo_is_on_no_data(mock_coordinator):
+    sw = AshlyGPOSwitch(mock_coordinator, 1)
+    mock_coordinator.data = None
+    assert sw.is_on is False
