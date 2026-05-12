@@ -21,7 +21,10 @@ line-length = 100
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.mypy]
-python_version = "3.12"
+# 3.14 because HA core in current pytest-hacc uses 3.14-only syntax (PEP 758
+# unparenthesized except*); we still SUPPORT 3.12+ at runtime, so manifest
+# stays Python 3.12+-compatible.
+python_version = "3.14"
 strict = true
 
 # socketio (python-socketio) doesn't ship type stubs.
