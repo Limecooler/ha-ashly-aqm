@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorEntity,
@@ -54,11 +55,11 @@ class AshlyFirmwareSensor(AshlyEntity, SensorEntity):
             coordinator,
             AshlySensorEntityDescription(
                 key="firmware_version",
+                translation_key="firmware_version",
                 entity_category=EntityCategory.DIAGNOSTIC,
                 entity_registry_enabled_default=False,
             ),
         )
-        self._attr_name = "Firmware version"
 
     @property
     def native_value(self) -> str | None:
@@ -78,11 +79,11 @@ class AshlyPresetCountSensor(AshlyEntity, SensorEntity):
             coordinator,
             AshlySensorEntityDescription(
                 key="preset_count",
+                translation_key="preset_count",
                 entity_category=EntityCategory.DIAGNOSTIC,
                 entity_registry_enabled_default=False,
             ),
         )
-        self._attr_name = "Preset count"
 
     @property
     def native_value(self) -> int | None:
@@ -90,7 +91,7 @@ class AshlyPresetCountSensor(AshlyEntity, SensorEntity):
         return len(data.presets) if data is not None else None
 
     @property
-    def extra_state_attributes(self) -> dict:
+    def extra_state_attributes(self) -> dict[str, Any]:
         data = self.coordinator.data
         if data is None:
             return {}
@@ -109,10 +110,10 @@ class AshlyLastRecalledPresetSensor(AshlyEntity, SensorEntity):
             coordinator,
             AshlySensorEntityDescription(
                 key="last_recalled_preset",
+                translation_key="last_recalled_preset",
                 entity_category=EntityCategory.DIAGNOSTIC,
             ),
         )
-        self._attr_name = "Last recalled preset"
 
     @property
     def native_value(self) -> str | None:
@@ -122,7 +123,7 @@ class AshlyLastRecalledPresetSensor(AshlyEntity, SensorEntity):
         return data.last_recalled_preset.name
 
     @property
-    def extra_state_attributes(self) -> dict:
+    def extra_state_attributes(self) -> dict[str, Any]:
         data = self.coordinator.data
         if data is None:
             return {}
@@ -148,7 +149,6 @@ class AshlyChannelMeterSensor(AshlyEntity, SensorEntity):
 
     _attr_native_unit_of_measurement = "dB"
     _attr_suggested_display_precision = 0
-    _attr_icon = "mdi:waveform"
 
     def __init__(
         self,
@@ -160,16 +160,17 @@ class AshlyChannelMeterSensor(AshlyEntity, SensorEntity):
     ) -> None:
         if kind == "input":
             meter_index = channel - 1  # positions 0..11
-            label = f"Input {channel} signal level"
+            translation_key = "input_meter"
         elif kind == "mixer":
             meter_index = NUM_INPUTS + channel - 1  # positions 12..23
-            label = f"Mixer input {channel} signal level"
+            translation_key = "output_meter"
         else:
             raise ValueError(f"Unknown meter kind: {kind!r}")
         super().__init__(
             coordinator,
             AshlySensorEntityDescription(
                 key=f"meter_{kind}_{channel}",
+                translation_key=translation_key,
                 entity_category=EntityCategory.DIAGNOSTIC,
                 # Disabled by default: 24 noisy push-based sensors per
                 # device is too much for the default UI. Users enable
@@ -179,7 +180,7 @@ class AshlyChannelMeterSensor(AshlyEntity, SensorEntity):
         )
         self._meter_client = meter_client
         self._meter_index = meter_index
-        self._attr_name = label
+        self._attr_translation_placeholders = {"channel_number": str(channel)}
         # Seed with the floor so the entity has a value immediately.
         self._cached_db: float = METER_FLOOR_DB
 

@@ -79,9 +79,6 @@
   },
   "entity": {
     "switch": {
-      "device_power": {
-        "name": "Power"
-      },
       "input_channel_mute": {
         "name": "Input {channel_number} mute"
       },
@@ -93,6 +90,15 @@
       },
       "crosspoint_mute": {
         "name": "Mixer {mixer_number} input {input_number} mute"
+      },
+      "front_panel_leds": {
+        "name": "Front-panel LEDs"
+      },
+      "phantom_power": {
+        "name": "Input {channel_number} phantom power"
+      },
+      "gpo": {
+        "name": "GPO {pin_number}"
       }
     },
     "number": {
@@ -101,12 +107,52 @@
       },
       "crosspoint_level": {
         "name": "Mixer {mixer_number} input {input_number} level"
+      },
+      "mic_preamp_gain": {
+        "name": "Input {channel_number} preamp gain"
       }
     },
     "select": {
       "output_mixer": {
         "name": "Output {output_number} mixer"
       }
+    },
+    "sensor": {
+      "firmware_version": {
+        "name": "Firmware version"
+      },
+      "preset_count": {
+        "name": "Preset count"
+      },
+      "last_recalled_preset": {
+        "name": "Last recalled preset"
+      },
+      "input_meter": {
+        "name": "Input {channel_number} level"
+      },
+      "output_meter": {
+        "name": "Output {channel_number} level"
+      }
+    }
+  },
+  "exceptions": {
+    "device_error": {
+      "message": "Operation on the Ashly device failed: {error}"
+    },
+    "preset_not_found": {
+      "message": "Preset {preset!r} not found on {host}. Available presets: {available}"
+    },
+    "unknown_device": {
+      "message": "Unknown device id: {device_id}"
+    },
+    "not_ashly_device": {
+      "message": "Device {device_id} is not an Ashly device"
+    },
+    "entry_not_loaded": {
+      "message": "Ashly entry for device {device_id} is not loaded"
+    },
+    "unknown_mixer_option": {
+      "message": "Unknown mixer option: {option}"
     }
   }
 }

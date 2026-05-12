@@ -51,7 +51,11 @@ def async_register_services(hass: HomeAssistant) -> None:
         for device_id in device_ids:
             device = device_reg.async_get(device_id)
             if device is None:
-                raise ServiceValidationError(f"Unknown device id: {device_id}")
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="unknown_device",
+                    translation_placeholders={"device_id": device_id},
+                )
             # Find the Ashly config entry that owns this device.
             entry_id = next(
                 (
@@ -63,10 +67,18 @@ def async_register_services(hass: HomeAssistant) -> None:
                 None,
             )
             if entry_id is None:
-                raise ServiceValidationError(f"Device {device_id} is not an Ashly device")
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="not_ashly_device",
+                    translation_placeholders={"device_id": device_id},
+                )
             entry = hass.config_entries.async_get_entry(entry_id)
             if entry is None or not hasattr(entry, "runtime_data"):
-                raise ServiceValidationError(f"Ashly entry for device {device_id} is not loaded")
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="entry_not_loaded",
+                    translation_placeholders={"device_id": device_id},
+                )
             entries.append(entry)
 
         # Resolve preset by exact name first; then by numeric position in
@@ -80,14 +92,21 @@ def async_register_services(hass: HomeAssistant) -> None:
             resolved = _resolve_preset_name(preset, preset_names)
             if resolved is None:
                 raise ServiceValidationError(
-                    f"Preset {preset!r} not found on {client.host}; "
-                    f"available: {', '.join(preset_names) or '(none)'}"
+                    translation_domain=DOMAIN,
+                    translation_key="preset_not_found",
+                    translation_placeholders={
+                        "preset": preset,
+                        "host": client.host,
+                        "available": ", ".join(preset_names) or "(none)",
+                    },
                 )
             try:
                 await client.async_recall_preset(resolved)
             except AshlyError as err:
                 raise HomeAssistantError(
-                    f"Failed to recall preset {resolved!r} on {client.host}: {err}"
+                    translation_domain=DOMAIN,
+                    translation_key="device_error",
+                    translation_placeholders={"error": str(err)},
                 ) from err
             # Refresh the coordinator so `last_recalled_preset` and any
             # state that changed (mutes, levels, mixer assignments)

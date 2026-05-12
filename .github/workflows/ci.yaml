@@ -18,6 +18,16 @@ jobs:
       - run: ruff check custom_components/ tests/
       - run: ruff format --check custom_components/ tests/
 
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install mypy pytest-homeassistant-custom-component aioresponses 'python-socketio[asyncio_client]>=5.10'
+      - run: mypy custom_components/ashly/
+
   hassfest:
     runs-on: ubuntu-latest
     steps:
@@ -31,7 +41,6 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          ignore: brands
 
   test:
     runs-on: ubuntu-latest
@@ -41,4 +50,8 @@ jobs:
         with:
           python-version: "3.14"
       - run: pip install pytest-homeassistant-custom-component aioresponses 'python-socketio[asyncio_client]>=5.10'
-      - run: pytest tests/ -v --tb=short
+      - run: |
+          pytest tests/ -v --tb=short \
+            --cov=custom_components.ashly \
+            --cov-report=term-missing \
+            --cov-fail-under=80

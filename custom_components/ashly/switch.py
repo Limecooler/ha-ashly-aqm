@@ -12,7 +12,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import AshlyError, input_channel_id, output_channel_id
-from .const import NUM_DVCA_GROUPS, NUM_GPO, NUM_INPUTS, NUM_MIXERS, NUM_OUTPUTS
+from .const import DOMAIN, NUM_DVCA_GROUPS, NUM_GPO, NUM_INPUTS, NUM_MIXERS, NUM_OUTPUTS
 from .coordinator import AshlyConfigEntry, AshlyCoordinator
 from .entity import AshlyEntity
 
@@ -61,8 +61,16 @@ async def async_setup_entry(
 
 
 def _wrap(err: AshlyError, op: str) -> HomeAssistantError:
-    """Re-raise client exceptions as HA-friendly errors."""
-    return HomeAssistantError(f"Failed to {op}: {err}")
+    """Re-raise client exceptions as HA-friendly errors.
+
+    `op` is included only via the translation placeholder; the user-facing
+    string is sourced from translations/<lang>.json under exceptions.device_error.
+    """
+    return HomeAssistantError(
+        translation_domain=DOMAIN,
+        translation_key="device_error",
+        translation_placeholders={"error": f"{op}: {err}"},
+    )
 
 
 # ── Power ──────────────────────────────────────────────────────────────
@@ -120,8 +128,6 @@ class AshlyChainMuteSwitch(AshlyEntity, SwitchEntity):
     `is_on` means the chain is muted, mirroring the device API.
     """
 
-    _attr_icon = "mdi:volume-mute"
-
     def __init__(
         self,
         coordinator: AshlyCoordinator,
@@ -129,20 +135,15 @@ class AshlyChainMuteSwitch(AshlyEntity, SwitchEntity):
     ) -> None:
         kind, _, number = channel_id.partition(".")
         is_input = kind == "InputChannel"
-        # Friendly name uses the channel's user-set or default name from
-        # the device, falling back to a generic numbered label.
-        ch = coordinator.channels.get(channel_id)
-        ch_name = (
-            (ch.name or ch.default_name)
-            if ch
-            else (f"Input {number}" if is_input else f"Output {number}")
-        )
         super().__init__(
             coordinator,
-            AshlySwitchEntityDescription(key=f"chain_mute_{channel_id}"),
+            AshlySwitchEntityDescription(
+                key=f"chain_mute_{channel_id}",
+                translation_key=("input_channel_mute" if is_input else "output_channel_mute"),
+            ),
         )
         self._channel_id = channel_id
-        self._attr_name = f"{ch_name} mute"
+        self._attr_translation_placeholders = {"channel_number": number}
 
     @property
     def is_on(self) -> bool:
@@ -190,18 +191,16 @@ class AshlyChainMuteSwitch(AshlyEntity, SwitchEntity):
 class AshlyDVCAMuteSwitch(AshlyEntity, SwitchEntity):
     """Mute toggle for one virtual DCA group."""
 
-    _attr_icon = "mdi:volume-mute"
-
     def __init__(self, coordinator: AshlyCoordinator, index: int) -> None:
-        # Use the DCA's user-set name from the device when available.
-        dvca_state = coordinator.data.dvca.get(index) if coordinator.data is not None else None
-        name = dvca_state.name if dvca_state else f"DCA {index}"
         super().__init__(
             coordinator,
-            AshlySwitchEntityDescription(key=f"dvca_mute_{index}"),
+            AshlySwitchEntityDescription(
+                key=f"dvca_mute_{index}",
+                translation_key="dvca_mute",
+            ),
         )
         self._index = index
-        self._attr_name = f"{name} mute"
+        self._attr_translation_placeholders = {"group_number": str(index)}
 
     @property
     def is_on(self) -> bool:
@@ -253,8 +252,6 @@ class AshlyCrosspointMuteSwitch(AshlyEntity, SwitchEntity):
     Disabled by default to keep the entity registry sane out of the box.
     """
 
-    _attr_icon = "mdi:volume-mute"
-
     def __init__(
         self,
         coordinator: AshlyCoordinator,
@@ -265,13 +262,17 @@ class AshlyCrosspointMuteSwitch(AshlyEntity, SwitchEntity):
             coordinator,
             AshlySwitchEntityDescription(
                 key=f"xp_mute_m{mixer_index}_i{input_index}",
+                translation_key="crosspoint_mute",
                 entity_registry_enabled_default=False,
             ),
         )
         self._mixer = mixer_index
         self._input = input_index
         self._key: tuple[int, int] = (mixer_index, input_index)
-        self._attr_name = f"Mixer {mixer_index} input {input_index} mute"
+        self._attr_translation_placeholders = {
+            "mixer_number": str(mixer_index),
+            "input_number": str(input_index),
+        }
 
     @property
     def is_on(self) -> bool:
@@ -319,17 +320,15 @@ class AshlyCrosspointMuteSwitch(AshlyEntity, SwitchEntity):
 class AshlyFrontPanelLEDSwitch(AshlyEntity, SwitchEntity):
     """Toggle the device's front-panel status LEDs."""
 
-    _attr_icon = "mdi:led-on"
-
     def __init__(self, coordinator: AshlyCoordinator) -> None:
         super().__init__(
             coordinator,
             AshlySwitchEntityDescription(
                 key="front_panel_leds",
+                translation_key="front_panel_leds",
                 entity_category=EntityCategory.CONFIG,
             ),
         )
-        self._attr_name = "Front-panel LEDs"
 
     @property
     def is_on(self) -> bool:
@@ -369,18 +368,17 @@ class AshlyFrontPanelLEDSwitch(AshlyEntity, SwitchEntity):
 class AshlyPhantomPowerSwitch(AshlyEntity, SwitchEntity):
     """Toggle +48V phantom power on a mic/line input."""
 
-    _attr_icon = "mdi:flash"
-
     def __init__(self, coordinator: AshlyCoordinator, input_number: int) -> None:
         super().__init__(
             coordinator,
             AshlySwitchEntityDescription(
                 key=f"phantom_power_{input_number}",
+                translation_key="phantom_power",
                 entity_category=EntityCategory.CONFIG,
             ),
         )
         self._input = input_number
-        self._attr_name = f"Input {input_number} phantom power"
+        self._attr_translation_placeholders = {"channel_number": str(input_number)}
 
     @property
     def is_on(self) -> bool:
@@ -424,17 +422,16 @@ class AshlyPhantomPowerSwitch(AshlyEntity, SwitchEntity):
 class AshlyGPOSwitch(AshlyEntity, SwitchEntity):
     """Drive a rear-panel GPO pin high or low."""
 
-    _attr_icon = "mdi:electric-switch"
-
     def __init__(self, coordinator: AshlyCoordinator, pin_number: int) -> None:
         super().__init__(
             coordinator,
             AshlySwitchEntityDescription(
                 key=f"gpo_{pin_number}",
+                translation_key="gpo",
             ),
         )
         self._pin = pin_number
-        self._attr_name = f"GPO {pin_number}"
+        self._attr_translation_placeholders = {"pin_number": str(pin_number)}
 
     @property
     def is_on(self) -> bool:

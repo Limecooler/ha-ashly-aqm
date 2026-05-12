@@ -1,0 +1,83 @@
+{
+  "entity": {
+    "switch": {
+      "input_channel_mute": {
+        "default": "mdi:volume-high",
+        "state": {
+          "on": "mdi:volume-mute"
+        }
+      },
+      "output_channel_mute": {
+        "default": "mdi:volume-high",
+        "state": {
+          "on": "mdi:volume-mute"
+        }
+      },
+      "dvca_mute": {
+        "default": "mdi:volume-high",
+        "state": {
+          "on": "mdi:volume-mute"
+        }
+      },
+      "crosspoint_mute": {
+        "default": "mdi:volume-high",
+        "state": {
+          "on": "mdi:volume-mute"
+        }
+      },
+      "front_panel_leds": {
+        "default": "mdi:led-off",
+        "state": {
+          "on": "mdi:led-on"
+        }
+      },
+      "phantom_power": {
+        "default": "mdi:flash-off",
+        "state": {
+          "on": "mdi:flash"
+        }
+      },
+      "gpo": {
+        "default": "mdi:electric-switch"
+      }
+    },
+    "number": {
+      "dvca_level": {
+        "default": "mdi:tune-vertical"
+      },
+      "crosspoint_level": {
+        "default": "mdi:tune-vertical"
+      },
+      "mic_preamp_gain": {
+        "default": "mdi:microphone"
+      }
+    },
+    "select": {
+      "output_mixer": {
+        "default": "mdi:source-branch"
+      }
+    },
+    "sensor": {
+      "firmware_version": {
+        "default": "mdi:chip"
+      },
+      "preset_count": {
+        "default": "mdi:counter"
+      },
+      "last_recalled_preset": {
+        "default": "mdi:history"
+      },
+      "input_meter": {
+        "default": "mdi:waveform"
+      },
+      "output_meter": {
+        "default": "mdi:waveform"
+      }
+    }
+  },
+  "services": {
+    "recall_preset": {
+      "service": "mdi:playlist-play"
+    }
+  }
+}

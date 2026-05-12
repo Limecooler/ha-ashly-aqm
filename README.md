@@ -80,6 +80,22 @@ entity counts will need to be made model-aware.
 2. Restart Home Assistant.
 3. **Settings → Devices & Services → Add Integration** → "Ashly Audio".
 
+### Removing the integration
+
+This integration follows the standard Home Assistant integration removal
+process. No additional steps are required.
+
+1. **Settings → Devices & Services → Ashly Audio** → ⋮ → **Delete**.
+   Home Assistant unloads the integration, closes the device session and
+   the live-meter socket, and removes the device and all its entities
+   from the registry. No state remains on disk.
+2. (Optional, manual install only) Delete `custom_components/ashly/` from
+   your HA config directory and restart.
+3. (Optional, HACS install) HACS → **Ashly Audio** → ⋮ → **Remove**.
+
+The Ashly device itself is unaffected — its on-device presets, mixer
+state, and authentication credentials remain untouched.
+
 ---
 
 ## Configuration

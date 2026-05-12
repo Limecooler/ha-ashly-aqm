@@ -14,7 +14,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import AshlyError, output_channel_id
-from .const import NO_MIXER, NUM_MIXERS, NUM_OUTPUTS
+from .const import DOMAIN, NO_MIXER, NUM_MIXERS, NUM_OUTPUTS
 from .coordinator import AshlyConfigEntry, AshlyCoordinator
 from .entity import AshlyEntity
 
@@ -44,23 +44,20 @@ async def async_setup_entry(
 class AshlyOutputMixerSelect(AshlyEntity, SelectEntity):
     """Select which mixer feeds a given output channel."""
 
-    _attr_icon = "mdi:audio-input-rca"
-
     def __init__(self, coordinator: AshlyCoordinator, output_number: int) -> None:
         channel_id = output_channel_id(output_number)
-        ch = coordinator.channels.get(channel_id)
-        ch_name = (ch.name or ch.default_name) if ch else f"Output {output_number}"
         super().__init__(
             coordinator,
             AshlySelectEntityDescription(
                 key=f"output_mixer_{output_number}",
+                translation_key="output_mixer",
                 options=_mixer_options(),
             ),
         )
         self._output_number = output_number
         self._channel_id = channel_id
         self._attr_options = _mixer_options()
-        self._attr_name = f"{ch_name} mixer"
+        self._attr_translation_placeholders = {"output_number": str(output_number)}
 
     @property
     def current_option(self) -> str | None:
@@ -79,12 +76,20 @@ class AshlyOutputMixerSelect(AshlyEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         if option not in self._attr_options:
-            raise ServiceValidationError(f"Unknown mixer option: {option!r}")
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="unknown_mixer_option",
+                translation_placeholders={"option": option},
+            )
         try:
             await self.coordinator.client.async_set_output_mixer(self._channel_id, option)
         except AshlyError as err:
             raise HomeAssistantError(
-                f"Failed to set output {self._output_number} mixer: {err}"
+                translation_domain=DOMAIN,
+                translation_key="device_error",
+                translation_placeholders={
+                    "error": f"set output {self._output_number} mixer: {err}"
+                },
             ) from err
         self._push_optimistic(option)
 

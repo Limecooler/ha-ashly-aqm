@@ -16,6 +16,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import AshlyError
 from .const import (
+    DOMAIN,
     DVCA_LEVEL_MAX_DB,
     DVCA_LEVEL_MIN_DB,
     DVCA_LEVEL_STEP_DB,
@@ -59,7 +60,11 @@ async def async_setup_entry(
 
 
 def _wrap(err: AshlyError, op: str) -> HomeAssistantError:
-    return HomeAssistantError(f"Failed to {op}: {err}")
+    return HomeAssistantError(
+        translation_domain=DOMAIN,
+        translation_key="device_error",
+        translation_placeholders={"error": f"{op}: {err}"},
+    )
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -77,17 +82,17 @@ class AshlyDVCALevelNumber(AshlyEntity, NumberEntity):
     _attr_native_step = DVCA_LEVEL_STEP_DB
     _attr_native_unit_of_measurement = "dB"
     _attr_mode = NumberMode.SLIDER
-    _attr_icon = "mdi:tune-vertical"
 
     def __init__(self, coordinator: AshlyCoordinator, index: int) -> None:
-        dvca_state = coordinator.data.dvca.get(index) if coordinator.data is not None else None
-        name = dvca_state.name if dvca_state else f"DCA {index}"
         super().__init__(
             coordinator,
-            AshlyNumberEntityDescription(key=f"dvca_level_{index}"),
+            AshlyNumberEntityDescription(
+                key=f"dvca_level_{index}",
+                translation_key="dvca_level",
+            ),
         )
         self._index = index
-        self._attr_name = f"{name} level"
+        self._attr_translation_placeholders = {"group_number": str(index)}
 
     @property
     def native_value(self) -> float | None:
@@ -137,7 +142,6 @@ class AshlyCrosspointLevelNumber(AshlyEntity, NumberEntity):
     _attr_native_step = MIXER_LEVEL_STEP_DB
     _attr_native_unit_of_measurement = "dB"
     _attr_mode = NumberMode.SLIDER
-    _attr_icon = "mdi:tune-vertical"
 
     def __init__(
         self,
@@ -149,13 +153,17 @@ class AshlyCrosspointLevelNumber(AshlyEntity, NumberEntity):
             coordinator,
             AshlyNumberEntityDescription(
                 key=f"xp_level_m{mixer_index}_i{input_index}",
+                translation_key="crosspoint_level",
                 entity_registry_enabled_default=False,
             ),
         )
         self._mixer = mixer_index
         self._input = input_index
         self._key: tuple[int, int] = (mixer_index, input_index)
-        self._attr_name = f"Mixer {mixer_index} input {input_index} level"
+        self._attr_translation_placeholders = {
+            "mixer_number": str(mixer_index),
+            "input_number": str(input_index),
+        }
 
     @property
     def native_value(self) -> float | None:
@@ -204,18 +212,18 @@ class AshlyMicPreampGainNumber(AshlyEntity, NumberEntity):
     _attr_native_step = MIC_PREAMP_GAIN_STEP_DB
     _attr_native_unit_of_measurement = "dB"
     _attr_mode = NumberMode.BOX
-    _attr_icon = "mdi:microphone"
 
     def __init__(self, coordinator: AshlyCoordinator, input_number: int) -> None:
         super().__init__(
             coordinator,
             AshlyNumberEntityDescription(
                 key=f"mic_preamp_{input_number}",
+                translation_key="mic_preamp_gain",
                 entity_category=EntityCategory.CONFIG,
             ),
         )
         self._input = input_number
-        self._attr_name = f"Input {input_number} preamp gain"
+        self._attr_translation_placeholders = {"channel_number": str(input_number)}
 
     @property
     def native_value(self) -> float | None:

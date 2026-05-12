@@ -22,5 +22,23 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.mypy]
 python_version = "3.12"
-warn_return_any = true
-warn_unused_configs = true
+strict = true
+
+# socketio (python-socketio) doesn't ship type stubs.
+[[tool.mypy.overrides]]
+module = "socketio.*"
+ignore_missing_imports = true
+
+# The DHCP service_info module only exists in HA 2026.2+; the try/except fallback
+# in config_flow.py handles both. Locally we may be on an older HA stub set.
+[[tool.mypy.overrides]]
+module = "homeassistant.helpers.service_info.dhcp"
+ignore_missing_imports = true
+
+# Tests use pytest/pytest-asyncio fixtures that don't survive strict mode.
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_decorators = false
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disable_error_code = ["no-untyped-def", "no-untyped-call", "misc"]

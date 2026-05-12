@@ -7,7 +7,7 @@ import dataclasses
 import logging
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import callback
@@ -254,7 +254,11 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
             prev.last_recalled_preset if prev else LastRecalledPreset(name=None, modified=False),
         )
 
-        front_panel, chains, dvca, crosspoints = results[:4]
+        # Critical results were checked for exceptions above; narrow types for mypy.
+        front_panel = cast(FrontPanelInfo, results[0])
+        chains = cast("dict[str, ChainState]", results[1])
+        dvca = cast("dict[int, DVCAState]", results[2])
+        crosspoints = cast("dict[tuple[int, int], CrosspointState]", results[3])
         return AshlyDeviceData(
             system_info=self.system_info,
             front_panel=front_panel,

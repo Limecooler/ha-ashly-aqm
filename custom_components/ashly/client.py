@@ -544,8 +544,12 @@ class AshlyClient:
                 _LOGGER.debug("[%s] Skipping non-dict DVCA entry %r", self.host, item)
                 continue
             type_id = item.get("DSPParameterTypeId")
+            raw_index = item.get("index")
+            if raw_index is None:
+                _LOGGER.debug("[%s] Skipping DVCA entry with no index", self.host)
+                continue
             try:
-                idx = int(item.get("index"))
+                idx = int(raw_index)
             except (TypeError, ValueError):
                 _LOGGER.debug(
                     "[%s] Skipping DVCA entry with non-int index %r",

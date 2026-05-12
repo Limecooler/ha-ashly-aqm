@@ -1,0 +1,96 @@
+rules:
+  # Bronze ────────────────────────────────────────────────────────────────
+  action-setup: done
+  appropriate-polling: done
+  brands: done
+  common-modules: done
+  config-flow-test-coverage: done
+  config-flow: done
+  dependency-transparency: done
+  docs-actions: done
+  docs-high-level-description: done
+  docs-installation-instructions: done
+  docs-removal-instructions: done
+  entity-event-setup: done
+  entity-unique-id: done
+  has-entity-name: done
+  runtime-data: done
+  test-before-configure: done
+  test-before-setup: done
+  unique-config-entry: done
+
+  # Silver ────────────────────────────────────────────────────────────────
+  action-exceptions: done
+  config-entry-unloading: done
+  docs-configuration-parameters: done
+  docs-installation-parameters: done
+  entity-unavailable: done
+  integration-owner: done
+  log-when-unavailable: done
+  parallel-updates: done
+  reauthentication-flow: done
+  test-coverage:
+    status: todo
+    comment: |
+      Pytest-cov was just wired into CI with a floor of 80%. Once the actual
+      number is reported, ratchet up to >=95% per Silver requirement. Likely
+      gaps are around meter.py (socket.io reconnect paths) and config_flow.py
+      DHCP-discovery edge cases.
+
+  # Gold ──────────────────────────────────────────────────────────────────
+  devices: done
+  diagnostics: done
+  discovery: done
+  discovery-update-info: done
+  docs-data-update:
+    status: todo
+    comment: |
+      README does not explicitly explain the coordinator polling model.
+      Most state comes from a poll at the configured interval; meters use
+      a separate live socket.io stream.
+  docs-examples: done
+  docs-known-limitations:
+    status: todo
+    comment: |
+      README has a troubleshooting section but no dedicated "known
+      limitations" section. Worth calling out: only AQM1208/AQM408 are
+      supported, dynamic entity counts are model-aware via system info,
+      and the device must be reachable on the configured port (no UDP
+      discovery beyond DHCP MAC sniffing).
+  docs-supported-devices: done
+  docs-supported-functions: done
+  docs-troubleshooting: done
+  docs-use-cases:
+    status: todo
+    comment: |
+      Add a "Use cases" section with concrete scenarios: zone-paging
+      automation, meeting-room preset recall, etc.
+  dynamic-devices:
+    status: exempt
+    comment: |
+      Each config entry represents exactly one AQM device. There are no
+      sub-devices dynamically added or removed by the integration at
+      runtime. Preset and crosspoint entities are pre-enumerated based on
+      device topology at setup.
+  entity-category: done
+  entity-device-class: done
+  entity-disabled-by-default: done
+  entity-translations: done
+  exception-translations: done
+  icon-translations: done
+  reconfiguration-flow: done
+  repair-issues:
+    status: todo
+    comment: |
+      No repair flows yet. Candidates: device unreachable for >24h,
+      authentication revoked on the device side, firmware version below
+      the minimum tested.
+  stale-devices:
+    status: exempt
+    comment: |
+      One device per config entry; removing the entry removes the device.
+
+  # Platinum ─────────────────────────────────────────────────────────────
+  async-dependency: done
+  inject-websession: done
+  strict-typing: done

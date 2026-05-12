@@ -16,6 +16,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import AshlyError
+from .const import DOMAIN
 from .coordinator import AshlyConfigEntry, AshlyCoordinator
 from .entity import AshlyEntity
 
@@ -49,10 +50,13 @@ class AshlyIdentifyButton(AshlyEntity, ButtonEntity):
                 entity_category=EntityCategory.DIAGNOSTIC,
             ),
         )
-        self._attr_name = "Identify"
 
     async def async_press(self, **kwargs: Any) -> None:
         try:
             await self.coordinator.client.async_identify()
         except AshlyError as err:
-            raise HomeAssistantError(f"Identify failed: {err}") from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="device_error",
+                translation_placeholders={"error": f"identify: {err}"},
+            ) from err

@@ -242,11 +242,11 @@ class AshlyMeterClient:
                 "meter websocket may misbehave — please report",
                 self._host,
             )
-        sio.eio.http = http_session  # type: ignore[attr-defined]
-        sio.eio.external_http = True  # type: ignore[attr-defined]
+        sio.eio.http = http_session
+        sio.eio.external_http = True
         self._sio = sio
 
-        @sio.on(_CHANNEL_METER_EVENT)
+        @sio.on(_CHANNEL_METER_EVENT)  # type: ignore[untyped-decorator]
         async def _on_channel_meter(payload: Any) -> None:
             records = _decode_records(payload)
             if records is None:
