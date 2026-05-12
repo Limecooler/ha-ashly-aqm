@@ -137,23 +137,52 @@ async def test_recall_preset_registration_is_idempotent(hass: HomeAssistant, loa
 
 
 async def test_recall_preset_device_owned_by_other_integration(hass: HomeAssistant, loaded_entry):
-    """Passing a device that belongs to a non-Ashly integration is rejected."""
+    """A device whose only config_entry is from a different integration is rejected."""
     from homeassistant.helpers import device_registry as dr
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+    # Add a config entry from a different integration and register a device under it.
+    other_entry = MockConfigEntry(domain="not_ashly", data={})
+    other_entry.add_to_hass(hass)
     device_reg = dr.async_get(hass)
-    other = device_reg.async_get_or_create(
-        config_entry_id=loaded_entry.entry_id,
-        identifiers={("hue", "fake")},
-        manufacturer="Hue",
+    other_device = device_reg.async_get_or_create(
+        config_entry_id=other_entry.entry_id,
+        identifiers={("not_ashly", "stub")},
+        manufacturer="Other",
     )
-    # Remove the Ashly entry id so the device is associated with nothing
-    # Ashly-related; the service handler should refuse.
-    device_reg.async_update_device(other.id, remove_config_entry_id=loaded_entry.entry_id)
     with pytest.raises(ServiceValidationError):
         await hass.services.async_call(
             DOMAIN,
             SERVICE_RECALL_PRESET,
-            {"device_id": other.id, "preset": "Preset 1"},
+            {"device_id": other_device.id, "preset": "Preset 1"},
+            blocking=True,
+        )
+
+
+async def test_recall_preset_device_on_unloaded_ashly_entry_raises(
+    hass: HomeAssistant, loaded_entry
+):
+    """A device tied to an Ashly entry that hasn't been set up yields entry_not_loaded.
+
+    Hit-list: covers the `entry is None or not hasattr(entry, 'runtime_data')` branch
+    that fires when the device's Ashly entry hasn't run async_setup_entry yet.
+    """
+    from homeassistant.helpers import device_registry as dr
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    unloaded_entry = MockConfigEntry(domain=DOMAIN, data={}, title="Pending Ashly")
+    unloaded_entry.add_to_hass(hass)
+    device_reg = dr.async_get(hass)
+    pending_device = device_reg.async_get_or_create(
+        config_entry_id=unloaded_entry.entry_id,
+        identifiers={(DOMAIN, "pending")},
+        manufacturer="Ashly Audio",
+    )
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_RECALL_PRESET,
+            {"device_id": pending_device.id, "preset": "Preset 1"},
             blocking=True,
         )
 

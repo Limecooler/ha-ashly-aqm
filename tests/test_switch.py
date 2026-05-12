@@ -418,3 +418,78 @@ async def test_gpo_is_on_no_data(mock_coordinator):
     sw = AshlyGPOSwitch(mock_coordinator, 1)
     mock_coordinator.data = None
     assert sw.is_on is False
+
+
+# ── Happy-path turn-on/turn-off for entities missing one direction ────
+
+
+async def test_dvca_mute_turn_off_happy_path(mock_coordinator):
+    """DVCA turn_off when not currently muted — exercises post-await optimistic line."""
+    dvca = dict(mock_coordinator.data.dvca)
+    dvca[2] = dataclasses.replace(dvca[2], muted=True)
+    mock_coordinator.data = dataclasses.replace(mock_coordinator.data, dvca=dvca)
+    sw = AshlyDVCAMuteSwitch(mock_coordinator, 2)
+    await sw.async_turn_off()
+    mock_coordinator.client.async_set_dvca_mute.assert_awaited_once_with(2, False)
+    pushed = mock_coordinator.async_set_updated_data.call_args[0][0]
+    assert pushed.dvca[2].muted is False
+
+
+async def test_crosspoint_mute_available_branch(mock_coordinator):
+    """Crosspoint mute switch reports available=True when both data and key exist."""
+    sw = AshlyCrosspointMuteSwitch(mock_coordinator, 1, 1)
+    assert sw.available is True
+
+
+async def test_crosspoint_mute_unavailable_when_missing(mock_coordinator):
+    """Crosspoint mute switch reports unavailable when the key is missing."""
+    cps = dict(mock_coordinator.data.crosspoints)
+    del cps[(1, 1)]
+    mock_coordinator.data = dataclasses.replace(mock_coordinator.data, crosspoints=cps)
+    sw = AshlyCrosspointMuteSwitch(mock_coordinator, 1, 1)
+    assert sw.available is False
+
+
+async def test_crosspoint_mute_turn_on_happy_path(mock_coordinator):
+    """Crosspoint mute turn_on issues a client call and pushes optimistic update."""
+    sw = AshlyCrosspointMuteSwitch(mock_coordinator, 2, 4)
+    await sw.async_turn_on()
+    mock_coordinator.client.async_set_crosspoint_mute.assert_awaited_once_with(2, 4, True)
+    pushed = mock_coordinator.async_set_updated_data.call_args[0][0]
+    assert pushed.crosspoints[(2, 4)].muted is True
+
+
+async def test_front_panel_led_turn_on_happy_path(mock_coordinator):
+    """Front-panel LED turn_on issues the client call and pushes optimistic update."""
+    # Default fixture has leds_enabled=True; flip to False so turn_on is meaningful.
+    fp = dataclasses.replace(mock_coordinator.data.front_panel, leds_enabled=False)
+    mock_coordinator.data = dataclasses.replace(mock_coordinator.data, front_panel=fp)
+    sw = AshlyFrontPanelLEDSwitch(mock_coordinator)
+    await sw.async_turn_on()
+    mock_coordinator.client.async_set_front_panel_leds.assert_awaited_once_with(True)
+    pushed = mock_coordinator.async_set_updated_data.call_args[0][0]
+    assert pushed.front_panel.leds_enabled is True
+
+
+async def test_phantom_power_turn_off_happy_path(mock_coordinator):
+    """Phantom-power turn_off pushes False to the device and to the optimistic state."""
+    pp = dict(mock_coordinator.data.phantom_power)
+    pp[1] = True
+    mock_coordinator.data = dataclasses.replace(mock_coordinator.data, phantom_power=pp)
+    sw = AshlyPhantomPowerSwitch(mock_coordinator, 1)
+    await sw.async_turn_off()
+    mock_coordinator.client.async_set_phantom_power.assert_awaited_once_with(1, False)
+    pushed = mock_coordinator.async_set_updated_data.call_args[0][0]
+    assert pushed.phantom_power[1] is False
+
+
+async def test_gpo_turn_off_happy_path(mock_coordinator):
+    """GPO turn_off issues the client call and pushes optimistic update."""
+    gpo = dict(mock_coordinator.data.gpo)
+    gpo[1] = True
+    mock_coordinator.data = dataclasses.replace(mock_coordinator.data, gpo=gpo)
+    sw = AshlyGPOSwitch(mock_coordinator, 1)
+    await sw.async_turn_off()
+    mock_coordinator.client.async_set_gpo.assert_awaited_once_with(1, False)
+    pushed = mock_coordinator.async_set_updated_data.call_args[0][0]
+    assert pushed.gpo[1] is False

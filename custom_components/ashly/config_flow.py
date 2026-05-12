@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 else:
     try:
         from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
-    except ImportError:  # HA < 2026.2
+    except ImportError:  # pragma: no cover  # HA < 2026.2 fallback; CI is on 2026.5+
         from homeassistant.components.dhcp import DhcpServiceInfo
 
 from .client import AshlyAuthError, AshlyClient, AshlyConnectionError, SystemInfo

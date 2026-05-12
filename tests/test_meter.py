@@ -422,3 +422,66 @@ async def test_connect_failure_resets_sio_and_propagates():
     ):
         await client._connect_and_stream()
     assert client._sio is None
+
+
+async def test_run_propagates_cancellation():
+    """_run re-raises CancelledError so the parent task exits cleanly on stop()."""
+    client = _make_client()
+
+    async def cancelled_attempt() -> None:
+        raise asyncio.CancelledError()
+
+    with (
+        patch.object(client, "_connect_and_stream", side_effect=cancelled_attempt),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await client._run()
+
+
+async def test_socket_meter_handler_fires_listener_on_valid_payload():
+    """Drive the @sio.on handler with a real payload; verify it updates state."""
+    sio = _make_fake_sio_client()
+    captured_handler: list = []
+
+    def capture_on(event_name):
+        def deco(fn):
+            captured_handler.append(fn)
+            return fn
+
+        return deco
+
+    sio.on = capture_on  # the @sio.on(_CHANNEL_METER_EVENT) decorator
+    # Make sio.wait() and sio.connect cooperate so _connect_and_stream returns
+    # after we've captured the handler.
+    waiter: asyncio.Future = asyncio.get_event_loop().create_future()
+    sio.wait.side_effect = lambda: waiter
+
+    client = _make_client()
+    calls: list[list[int]] = []
+    client.add_listener(lambda records: calls.append(list(records)))
+
+    with patch("custom_components.ashly.meter.socketio.AsyncClient", return_value=sio):
+        task = asyncio.create_task(client._connect_and_stream())
+        # Wait until the handler is registered.
+        for _ in range(50):
+            await asyncio.sleep(0.005)
+            if captured_handler:
+                break
+
+        # Trigger the handler with a valid payload.
+        valid_payload = {
+            "data": [{"records": [10, 20, 30]}],
+        }
+        await captured_handler[0](valid_payload)
+
+        # And with an invalid payload — should be silently dropped.
+        await captured_handler[0]({"data": []})
+
+        # Tear down.
+        client._stop_event.set()
+        if not waiter.done():
+            waiter.set_result(None)
+        await asyncio.wait_for(task, timeout=2.0)
+
+    assert client.latest_records == [10, 20, 30]
+    assert calls == [[10, 20, 30]]
