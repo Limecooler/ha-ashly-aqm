@@ -44,8 +44,8 @@ async def async_get_config_entry_diagnostics(
         coordinator_diag["last_exception"] = repr(coordinator.last_exception)
 
     client_diag = {
-        "auth_epoch": client._auth_epoch,
-        "authenticated": client._authenticated,
+        "auth_epoch": getattr(client, "_auth_epoch", None),
+        "authenticated": getattr(client, "_authenticated", None),
     }
 
     meter_diag: dict[str, Any] = {
