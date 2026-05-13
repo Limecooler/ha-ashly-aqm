@@ -288,6 +288,9 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
         each poll and saves ~30 KB of JSON parsing per poll for a typical
         device. The check runs each poll, so flipping an entity on
         triggers the next poll to start fetching.
+
+        Entity unique_id format is `<mac>_<key>` where key for crosspoints
+        is either `xp_level_m<n>_i<m>` or `xp_mute_m<n>_i<m>`.
         """
         ent_reg = er.async_get(self.hass)
         for entry in er.async_entries_for_config_entry(ent_reg, self.config_entry.entry_id):
@@ -295,11 +298,6 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
                 continue
             if entry.domain not in (Platform.NUMBER, Platform.SWITCH):
                 continue
-            if entry.unique_id.endswith(("_level", "_mute")) and (
-                "xp_level" in entry.unique_id or "xp_mute" in entry.unique_id
-            ):
-                return True
-            # Fallback by entity key (the suffix after the device MAC)
             if "xp_level_m" in entry.unique_id or "xp_mute_m" in entry.unique_id:
                 return True
         return False

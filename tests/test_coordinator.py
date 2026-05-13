@@ -480,6 +480,11 @@ async def test_flush_crosspoint_patches_noop_when_data_none(
     await coord._async_setup()
     coord.data = await coord._async_update_data()
     coord.queue_crosspoint_patch((1, 1), muted=False)
+    # Cancel the scheduled flush so HA's test fixture doesn't flag a lingering
+    # timer; then exercise the no-op path explicitly.
+    if coord._crosspoint_flush_handle is not None:
+        coord._crosspoint_flush_handle.cancel()
+        coord._crosspoint_flush_handle = None
     coord.data = None  # forcibly drop before the timer fires
     coord._flush_crosspoint_patches()  # must not crash
 
