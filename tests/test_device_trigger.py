@@ -37,13 +37,25 @@ async def test_async_get_triggers_returns_preset_recalled(hass: HomeAssistant, l
 
 
 async def test_async_get_triggers_empty_when_sensor_missing(hass: HomeAssistant, loaded_entry):
-    """A device without a last_recalled_preset entity exposes no triggers."""
+    """A device without a last_recalled_preset entity exposes no triggers.
+
+    Also seeds an entity from a different integration on the same device to
+    exercise the `platform != DOMAIN` continue branch in the lookup loop.
+    """
     from custom_components.ashly.device_trigger import async_get_triggers
 
     device_reg = dr.async_get(hass)
     ent_reg = er.async_get(hass)
     device = next(iter(device_reg.devices.values()))
-    # Remove the sensor entity to simulate a partial registry.
+    # Add a non-Ashly entity attached to the same device — covers the
+    # `platform != DOMAIN: continue` branch in _find_last_recalled_entity_id.
+    ent_reg.async_get_or_create(
+        domain="sensor",
+        platform="not_ashly",
+        unique_id="not_ashly_stub",
+        device_id=device.id,
+    )
+    # Remove the Ashly sensor to simulate a partial registry.
     for entry in list(er.async_entries_for_device(ent_reg, device.id)):
         if entry.unique_id.endswith("_last_recalled_preset"):
             ent_reg.async_remove(entry.entity_id)
