@@ -57,9 +57,17 @@ async def test_default_credentials_repair_flow_happy_path(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "init"
 
-    # Submit new credentials — mock_client.async_login defaults to a noop success.
-    result = await flow.async_step_init({CONF_USERNAME: "alice", CONF_PASSWORD: "hunter2"})
-    await hass.async_block_till_done()
+    # Patch the AshlyClient (and async_login) so the validation step doesn't
+    # try to open a real socket.
+    with (
+        patch(
+            "custom_components.ashly.repairs.AshlyClient.async_login",
+            return_value=None,
+        ),
+        patch("custom_components.ashly.AshlyClient", return_value=mock_client),
+    ):
+        result = await flow.async_step_init({CONF_USERNAME: "alice", CONF_PASSWORD: "hunter2"})
+        await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert loaded_entry.data[CONF_USERNAME] == "alice"
     assert loaded_entry.data[CONF_PASSWORD] == "hunter2"
