@@ -1,6 +1,6 @@
 [project]
 name = "ha-ashly-aqm"
-version = "0.6.0"
+version = "0.6.1"
 description = "Home Assistant integration for Ashly Audio AQM-series zone mixers (AQM1208, AQM408) via the AquaControl REST API + socket.io live-meter stream."
 readme = "README.md"
 requires-python = ">=3.12"

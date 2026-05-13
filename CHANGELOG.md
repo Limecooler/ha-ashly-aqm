@@ -4,6 +4,61 @@ All notable changes to this integration are documented here. Versioning loosely
 follows [Semantic Versioning](https://semver.org/) with the caveat that the
 `<major>.<minor>.<patch>` field also drives HA's HACS update notifications.
 
+## 0.6.1 — 2026-05-13
+
+UX-focused release driven by an onboarding review. No breaking changes for
+existing users, but every first-run path is now clearer.
+
+### Security / setup UX
+
+- **Factory password is no longer pre-filled** on the setup form. Users
+  now have to type the device's password rather than one-clicking through
+  with `secret`, which the `default_credentials` repair issue then scolded
+  them for. The username default (`admin`) stays.
+- **`cannot_connect` error names the host and port** and warns against
+  pasting URLs into the host field or hitting the device's web-UI port
+  (80) instead of the AquaControl API port (8000).
+- **`data_description` strings** rewritten with real "where do I find
+  this on the device?" guidance, not echoes of the field default.
+
+### Discovery
+
+- **Zeroconf / mDNS discovery added.** Static-IP installs (the norm on
+  AV racks) often miss DHCP-based discovery. The manifest now matches
+  `_http._tcp.local.` advertisements with `aqm*` or `ashly*` hostnames;
+  the new `async_step_zeroconf` extracts the MAC from the hostname
+  suffix or properties dict and behaves identically to the DHCP path.
+- **Port override in the discovery confirm dialog** for deployments that
+  remapped AquaControl off port 8000.
+
+### Reauth / reconfigure
+
+- Reauth dialog now shows the device name and `host:port` so users with
+  multiple AQMs know which one is asking.
+- Reconfigure description shows the current host/port and frames the
+  common "IP changed / password changed" cases.
+
+### Repair fix flow
+
+- **`default_credentials` repair issue is now fixable in one click.**
+  The Fix button opens a small form, validates new credentials against
+  the device, writes them to the entry, and reloads. The issue
+  auto-clears on the next successful poll.
+
+### Options
+
+- Poll-interval floor raised from 5 s to 10 s (a 9-endpoint gather every
+  5 s is harsh on a small embedded CPU). Description recommends 30 s and
+  notes that live meters update at 1 Hz regardless of this setting.
+
+### Misc
+
+- `no_mac` is now an abort, not a re-submittable error — the user can't
+  fix this without firmware updates.
+- `already_configured` copy explains how to add a second device.
+- 100% coverage maintained; 21 new tests covering the zeroconf paths,
+  port override, no_mac abort, and 5 repair-flow paths.
+
 ## 0.6.0 — 2026-05-13
 
 Resilience, performance, and HA-platform polish. No breaking changes for end
