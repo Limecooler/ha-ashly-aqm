@@ -76,6 +76,7 @@ async def test_async_attach_trigger_fires_on_state_change(hass: HomeAssistant, l
         "name": "test",
         "home_assistant_start": False,
         "trigger_data": {"id": "test", "idx": "0"},
+        "variables": {},
     }
     remove = await async_attach_trigger(
         hass,
@@ -115,6 +116,7 @@ async def test_async_attach_trigger_raises_when_no_entity(hass: HomeAssistant, l
         "name": "test",
         "home_assistant_start": False,
         "trigger_data": {"id": "test", "idx": "0"},
+        "variables": {},
     }
     with pytest.raises(ValueError, match="No last_recalled_preset"):
         await async_attach_trigger(
