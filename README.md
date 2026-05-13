@@ -249,6 +249,86 @@ the write didn't actually land.
   clock skews dramatically. The client transparently re-authenticates;
   if the configured password has actually changed on the device,
   HA's reauth flow kicks in and prompts for new credentials.
+- **Translations.** Only English is shipped today. The source-of-truth
+  lives in `custom_components/ashly/strings.json`; translations for
+  other languages can be contributed as `translations/<lang>.json`
+  files following the same shape. CI checks that the source and
+  compiled English file stay in sync.
+
+---
+
+## Troubleshooting
+
+Beyond the install-time errors covered in [If setup fails](#if-setup-fails)
+above, here's what to look for once the integration is running.
+
+### Repair issues
+
+The integration surfaces actionable issues in **Settings → Repairs**:
+
+- **"Ashly device is using factory-default credentials"** — fires once
+  setup completes if the entry still has `admin` / `secret`. Click
+  **Fix** to open a one-step form: change the password on the device
+  via the AquaControl Portal first, then enter the new credentials
+  here. Home Assistant reconnects and the issue clears on the next
+  poll.
+
+- **"Ashly device has been unreachable"** — fires after ~10 minutes of
+  consecutive poll failures (default 20 polls × 30 s). Most common
+  causes: the device powered off, a network/cable disruption, or the
+  device's IP changed (typically via DHCP renewal). If the IP changed,
+  open **Settings → Devices & Services → Ashly Audio → Configure** to
+  update the host. The issue clears automatically on the next
+  successful poll.
+
+### Entities show as "unavailable"
+
+The whole device's entities go unavailable when the coordinator's
+30-second poll fails. Causes, in rough order of likelihood:
+
+- **Network glitch** — the next successful poll restores everything.
+  HA logs one line per transition (not per failed poll).
+- **Device rebooted** — the coordinator re-auths on its own when the
+  device comes back. No user action needed.
+- **Device IP changed** — see the `device_unreachable` repair above.
+- **Password was changed on the device** — HA's reauth flow fires;
+  look for a notification prompting you to update credentials.
+
+### Meter sensors stop updating
+
+Live meters use a separate websocket on port 8001. If REST polling
+works but meters are stale, the socket.io connection has dropped:
+
+- The integration auto-reconnects with exponential backoff (1 → 30 s,
+  with ±30% jitter). Most short disconnects self-heal in <60 s.
+- If meters stay flat-lined for several minutes, restart the
+  integration (**Settings → Devices & Services → Ashly Audio → ⋮ →
+  Reload**) — this re-opens both REST and meter connections.
+- Persistent meter outages while REST polling succeeds usually mean
+  port 8001 is blocked. Check firewall rules between HA and the AQM.
+
+### Reauth keeps firing
+
+The coordinator only escalates auth errors to a reauth flow when
+*no* concurrent connection errors are present in the same poll. A
+device that flaps between 401 and timeout during boot won't trigger
+spurious reauths. If reauth fires repeatedly with the *same*
+credentials succeeding briefly, check the device's clock — extreme
+NTP drift can invalidate session cookies sooner than expected.
+
+### Getting help
+
+Open a [bug report](https://github.com/limecooler/ha-ashly-aqm/issues/new/choose)
+and include the **diagnostics download** from
+**Settings → Devices & Services → Ashly Audio → ⋮ → Download diagnostics**.
+The download includes coordinator health (last update success, consecutive
+failures, last exception), client auth state, meter connection state,
+and the full polled device state — with `password`, `host`, and
+`mac_address` automatically redacted.
+
+For suspected security issues, follow [SECURITY.md](./SECURITY.md)
+(private vuln reports via GitHub Security Advisories) instead of the
+public issue tracker.
 
 ---
 
@@ -312,8 +392,16 @@ per-entity from the entity-settings UI):
 - **Output mixer assignment** — for each of the 8 outputs, pick a mixer
   (`Mixer.1`…`Mixer.8`) or `None`.
 
-### Buttons (1)
-- **Identify** — blinks the device's COM LED for 10 s (diagnostic).
+### Buttons (1 + one per preset)
+
+- **Identify** — blinks the device's COM LED for 10 s (diagnostic; enabled).
+- **Recall &lt;preset&gt;** — one button per stored preset on the device,
+  dynamically created at setup and refreshed when presets are added or
+  removed via AquaControl Portal. **Disabled by default** (a venue with
+  30 presets does not want 30 buttons cluttering the device card).
+  Enable in the entity-settings page for the presets you want on a
+  Lovelace dashboard. Pressing the button is equivalent to
+  `ashly.recall_preset` with that preset's name.
 
 ### Services (1)
 - **`ashly.recall_preset`** — load a stored preset by name or by 1-based
@@ -335,6 +423,25 @@ per-entity from the entity-settings UI):
 - **Preset count** — disabled, diagnostic; attribute `presets` lists all
 - **Input N signal level** × 12 — disabled, diagnostic, dB; pushed at 1 Hz
 - **Mixer input N signal level** × 12 — disabled, diagnostic, dB; pushed at 1 Hz
+
+### Device triggers
+
+Beyond raw entity state, the integration registers a single device
+trigger for use in the automation UI's **When** picker:
+
+- **Preset recalled** — fires when the device's last-recalled preset
+  changes (i.e. someone, somewhere — HA, AquaControl Portal, a Crestron
+  panel — recalls a preset). Under the hood this is a state trigger on
+  the device's `Last recalled preset` sensor; using the device trigger
+  is cleaner than templating against the entity.
+
+### Device actions
+
+The automation UI's **Then do…** picker exposes:
+
+- **Recall preset** — same effect as the `ashly.recall_preset` service
+  but selectable from a dropdown without writing YAML. Takes a single
+  `preset` field (name or 1-based numeric index).
 
 ---
 
