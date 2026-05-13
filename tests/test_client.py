@@ -54,6 +54,15 @@ async def client(session):
 # ── login ───────────────────────────────────────────────────────────────
 
 
+def test_float_port_is_coerced_to_int(session):
+    """Regression: HA's NumberSelector returns floats; the URL builder must
+    not end up with `host:8000.0` (aiohttp rejects it)."""
+    c = AshlyClient(host="192.0.2.1", port=8000.0, session=session)  # type: ignore[arg-type]
+    assert c.port == 8000
+    assert "8000.0" not in c._base_url
+    assert c._base_url == "http://192.0.2.1:8000/v1.0-beta"
+
+
 async def test_login_success(client):
     with aioresponses() as m:
         m.post(f"{BASE}/session/login", status=200, payload=envelope([{"loggedIn": True}]))

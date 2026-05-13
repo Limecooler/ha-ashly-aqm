@@ -33,9 +33,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: AshlyConfigEntry) -> boo
     cookie_jar = aiohttp.CookieJar(unsafe=True)
     session = async_create_clientsession(hass, cookie_jar=cookie_jar)
 
+    # HA's NumberSelector returns floats; coerce to int defensively so the
+    # URL builder doesn't end up with `:8000.0` (which aiohttp rejects).
+    port = int(entry.data.get(CONF_PORT, DEFAULT_PORT))
+
     client = AshlyClient(
         host=entry.data[CONF_HOST],
-        port=entry.data.get(CONF_PORT, DEFAULT_PORT),
+        port=port,
         session=session,
         username=entry.data.get(CONF_USERNAME, DEFAULT_USERNAME),
         password=entry.data.get(CONF_PASSWORD, DEFAULT_PASSWORD),
@@ -53,7 +57,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AshlyConfigEntry) -> boo
 
     meter_client = AshlyMeterClient(
         host=entry.data[CONF_HOST],
-        port=entry.data.get(CONF_PORT, DEFAULT_PORT),
+        port=port,
         cookie_jar=cookie_jar,
     )
     # Start the websocket reconnect loop in the background; it survives

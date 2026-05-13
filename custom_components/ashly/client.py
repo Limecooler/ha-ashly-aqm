@@ -210,11 +210,14 @@ class AshlyClient:
         password: str = "secret",
     ) -> None:
         self.host = host
-        self.port = port
+        # Coerce to int — HA's NumberSelector may pass a float, and aiohttp
+        # rejects URLs containing `host:8000.0`. Defence in depth: the config
+        # flow normalises this already, but accept either shape here too.
+        self.port = int(port)
         self._session = session
         self._username = username
         self._password = password
-        self._base_url = f"http://{host}:{port}{API_PREFIX}"
+        self._base_url = f"http://{host}:{self.port}{API_PREFIX}"
         self._auth_lock = asyncio.Lock()
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
         self._authenticated = False

@@ -155,7 +155,11 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
                 mac = format_mac(info.mac_address)
                 await self.async_set_unique_id(mac)
                 self._abort_if_unique_id_configured()
-                return self.async_create_entry(title=_entry_title(info), data=user_input)
+                # NumberSelector returns the port as a float; normalise to
+                # int so callers building `host:port` URLs don't end up with
+                # `:8000.0`.
+                stored = {**user_input, CONF_PORT: last_port}
+                return self.async_create_entry(title=_entry_title(info), data=stored)
 
         return self.async_show_form(
             step_id="user",
@@ -426,9 +430,9 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
                 mac = format_mac(info.mac_address)
                 await self.async_set_unique_id(mac)
                 self._abort_if_unique_id_mismatch()
-                return self.async_update_reload_and_abort(
-                    reconfigure_entry, data_updates=user_input
-                )
+                # Same float→int port coercion as the user step.
+                stored = {**user_input, CONF_PORT: current_port}
+                return self.async_update_reload_and_abort(reconfigure_entry, data_updates=stored)
 
         suggested = {
             CONF_HOST: reconfigure_entry.data.get(CONF_HOST, ""),

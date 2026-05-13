@@ -4,6 +4,29 @@ All notable changes to this integration are documented here. Versioning loosely
 follows [Semantic Versioning](https://semver.org/) with the caveat that the
 `<major>.<minor>.<patch>` field also drives HA's HACS update notifications.
 
+## 0.6.3 — 2026-05-13
+
+**Bug fix release** — fixes a ship-blocker spotted by a user during real-world
+setup: HA's `NumberSelector` widget returns floats, so the port `8000` was
+being stored as `8000.0`. Every subsequent URL ended up as
+`http://<host>:8000.0/v1.0-beta`, which aiohttp rejects with
+`Cannot connect to <host>:8000.0`, and setup fails on retry forever.
+
+- **`AshlyClient.__init__` coerces `port` to `int`** so even a float port
+  from any source produces a clean URL.
+- **Config flow stores the port as int** in `async_create_entry` (user
+  step) and `async_update_reload_and_abort` (reconfigure step). Existing
+  entries with stored float ports are healed by the client-side coercion
+  on the next reload.
+- **`__init__.async_setup_entry`** explicitly `int()`s the port when
+  reading from `entry.data` for the client + meter constructors.
+- New regression test (`test_float_port_is_coerced_to_int`) locks the
+  fix in.
+
+If you were stuck on "Failed setup, will retry: Cannot connect to
+&lt;host&gt;:8000.0" — upgrading to 0.6.3 and clicking **Reload** on the
+integration card will heal the entry.
+
 ## 0.6.2 — 2026-05-13
 
 Second-pass UX polish driven by a follow-up onboarding review. Fixes
