@@ -15,5 +15,5 @@
   "loggers": ["custom_components.ashly"],
   "quality_scale": "platinum",
   "requirements": ["python-socketio[asyncio_client]>=5.10"],
-  "version": "0.5.0"
+  "version": "0.5.1"
 }
