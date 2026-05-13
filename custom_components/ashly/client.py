@@ -84,6 +84,16 @@ class AshlyConnectionError(AshlyError):
     """Raised when the device cannot be reached."""
 
 
+class AshlyTimeoutError(AshlyConnectionError):
+    """Raised when a single HTTP request times out.
+
+    Subclasses `AshlyConnectionError` so existing handlers that catch
+    connection errors continue to work; downstream code that wants to
+    distinguish a brief per-request timeout from a full connection
+    failure (e.g. for best-effort endpoint reuse) catches this first.
+    """
+
+
 class AshlyAuthError(AshlyError):
     """Raised on 401/403 authentication failures."""
 
@@ -266,7 +276,9 @@ class AshlyClient:
                         raise AshlyAuthError(f"Login refused: {body.get('error') or 'unknown'}")
                     self._authenticated = True
                     self._auth_epoch += 1
-            except (aiohttp.ClientError, TimeoutError) as err:
+            except TimeoutError as err:
+                raise AshlyTimeoutError(f"Login to {self.host}:{self.port} timed out") from err
+            except aiohttp.ClientError as err:
                 raise AshlyConnectionError(f"Cannot connect to {self.host}:{self.port}") from err
 
     async def _parse_json(self, resp: aiohttp.ClientResponse) -> Any:
@@ -343,7 +355,9 @@ class AshlyClient:
                 return await self._parse_json(resp), False, saw_epoch
         except AshlyError:
             raise
-        except (aiohttp.ClientError, TimeoutError) as err:
+        except TimeoutError as err:
+            raise AshlyTimeoutError(f"Request to {self.host}:{self.port} timed out") from err
+        except aiohttp.ClientError as err:
             raise AshlyConnectionError(f"Cannot connect to {self.host}:{self.port}") from err
 
     async def _get(self, path: str) -> Any:

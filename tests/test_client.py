@@ -14,6 +14,7 @@ from custom_components.ashly.client import (
     AshlyAuthError,
     AshlyClient,
     AshlyConnectionError,
+    AshlyTimeoutError,
 )
 
 BASE = "http://192.168.1.100:8000/v1.0-beta"
@@ -1170,6 +1171,47 @@ async def test_request_defensive_double_401_raises_auth_error(client):
     with pytest.raises(AshlyAuthError, match="Re-auth did not unblock"):
         await client._request("GET", "/whatever")
     assert calls["n"] == 2
+
+
+async def test_request_once_timeout_raises_timeout_error(client):
+    """A TimeoutError from the underlying session becomes AshlyTimeoutError."""
+    import contextlib
+    from unittest.mock import MagicMock
+
+    @contextlib.asynccontextmanager
+    async def fake_request(*a, **kw):
+        raise TimeoutError("slow device")
+        yield MagicMock()  # pragma: no cover  unreachable
+
+    with (
+        patch_object_request(client, fake_request),
+        pytest.raises(AshlyTimeoutError),
+    ):
+        await client._request_once("GET", "/whatever")
+
+
+async def test_login_timeout_raises_timeout_error(client):
+    """A TimeoutError during login becomes AshlyTimeoutError, not plain connection."""
+    import contextlib
+    from unittest.mock import MagicMock
+
+    @contextlib.asynccontextmanager
+    async def fake_post(*a, **kw):
+        raise TimeoutError("slow")
+        yield MagicMock()  # pragma: no cover
+
+    original_post = client._session.post
+    client._session.post = fake_post
+    try:
+        with pytest.raises(AshlyTimeoutError):
+            await client.async_login()
+    finally:
+        client._session.post = original_post
+
+
+def test_ashly_timeout_error_subclasses_connection_error():
+    """Code that catches AshlyConnectionError still catches a timeout."""
+    assert issubclass(AshlyTimeoutError, AshlyConnectionError)
 
 
 # Helper used by test_request_once_error_body_read_failure_yields_placeholder

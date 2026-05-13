@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import random
 from collections.abc import Callable
 from typing import Any
 
@@ -64,6 +65,18 @@ _CHANNEL_METER_EVENT = "Channel Meters"
 
 # Meter-value floor (silent / disconnected channel). Equal to range minimum.
 METER_FLOOR_DB = METER_INPUT_RANGE_DB[0]
+
+
+def _next_backoff(current: float) -> float:
+    """Double the current backoff, clamp to MAX, then apply ±30% jitter.
+
+    Jitter prevents N devices on the same LAN from all reconnecting on the
+    same tick after a network outage. Floor at _MIN_BACKOFF_S so a jittered
+    value can't go below the minimum poll interval.
+    """
+    doubled = min(_MAX_BACKOFF_S, current * 2)
+    jittered = doubled * (0.7 + random.random() * 0.6)
+    return max(_MIN_BACKOFF_S, jittered)
 
 
 def _decode_records(payload: Any) -> list[int] | None:
@@ -207,16 +220,13 @@ class AshlyMeterClient:
                     break  # stop requested
                 except TimeoutError:
                     pass
-                backoff = min(_MAX_BACKOFF_S, backoff * 2)
+                backoff = _next_backoff(backoff)
                 continue
             # Clean disconnect → reset backoff only if the connection
             # was stable for a while; otherwise treat it as a flap and
             # keep doubling.
             uptime = loop.time() - connect_start
-            if uptime >= _BACKOFF_RESET_DWELL_S:
-                backoff = _MIN_BACKOFF_S
-            else:
-                backoff = min(_MAX_BACKOFF_S, backoff * 2)
+            backoff = _MIN_BACKOFF_S if uptime >= _BACKOFF_RESET_DWELL_S else _next_backoff(backoff)
 
     async def _connect_and_stream(self) -> None:
         # Build a dedicated aiohttp session with the threaded resolver so we

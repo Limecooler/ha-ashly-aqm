@@ -438,6 +438,29 @@ async def test_run_propagates_cancellation():
         await client._run()
 
 
+def test_next_backoff_jitter_within_bounds():
+    """_next_backoff applies ±30% jitter to the doubled-and-clamped value."""
+    from custom_components.ashly.meter import _MAX_BACKOFF_S, _MIN_BACKOFF_S, _next_backoff
+
+    # Drive `random.random` to extremes and verify the bounds.
+    with patch("custom_components.ashly.meter.random.random", return_value=0.0):
+        low = _next_backoff(10.0)
+    with patch("custom_components.ashly.meter.random.random", return_value=1.0):
+        high = _next_backoff(10.0)
+    # 10s → doubled to 20 → jitter range [14.0, 26.0]
+    assert 13.9 <= low <= 14.1
+    assert 25.9 <= high <= 26.1
+    # Floor at MIN even with very low jitter on a tiny current value.
+    with patch("custom_components.ashly.meter.random.random", return_value=0.0):
+        floored = _next_backoff(_MIN_BACKOFF_S * 0.1)
+    assert floored >= _MIN_BACKOFF_S
+    # Above-MAX jitter is allowed (since +30% pushes past clamp); test we
+    # don't go below MIN.
+    with patch("custom_components.ashly.meter.random.random", return_value=1.0):
+        capped = _next_backoff(_MAX_BACKOFF_S)
+    assert capped >= _MIN_BACKOFF_S
+
+
 async def test_socket_meter_handler_fires_listener_on_valid_payload():
     """Drive the @sio.on handler with a real payload; verify it updates state."""
     sio = _make_fake_sio_client()

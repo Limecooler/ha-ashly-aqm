@@ -13,8 +13,12 @@ from custom_components.ashly.client import (
     AshlyApiError,
     AshlyAuthError,
     AshlyConnectionError,
+    AshlyTimeoutError,
 )
-from custom_components.ashly.coordinator import AshlyCoordinator
+from custom_components.ashly.coordinator import (
+    _UNREACHABLE_REPAIR_THRESHOLD,
+    AshlyCoordinator,
+)
 
 
 @pytest.fixture
@@ -237,3 +241,90 @@ async def test_apply_patch_noop_when_data_none(coordinator):
     """apply_patch must not crash when first refresh hasn't completed yet."""
     coordinator.data = None
     coordinator.apply_patch(power_on=True)  # no exception
+
+
+# ── Critical-endpoint timeout-softening ─────────────────────────────────
+
+
+async def test_critical_endpoint_timeout_reuses_prior_value(coordinator, mock_client):
+    """A TimeoutError on a critical endpoint reuses the prior poll's value
+    when one exists (instead of tanking the whole poll)."""
+    await coordinator._async_setup()
+    # Seed prev data with a full successful poll.
+    first = await coordinator._async_update_data()
+    coordinator.data = first
+
+    # Now simulate the next poll: front_panel times out, others succeed.
+    mock_client.async_get_front_panel.side_effect = AshlyTimeoutError("slow")
+    data = await coordinator._async_update_data()
+    # The poll succeeded with the prior front_panel value reused.
+    assert data.front_panel == first.front_panel
+
+
+async def test_critical_endpoint_timeout_tanks_first_poll(coordinator, mock_client):
+    """If there's no prior data to fall back on, a critical timeout still tanks."""
+    await coordinator._async_setup()
+    mock_client.async_get_front_panel.side_effect = AshlyTimeoutError("slow")
+    with pytest.raises(UpdateFailed):
+        await coordinator._async_update_data()
+
+
+# ── device_unreachable repair issue lifecycle ───────────────────────────
+
+
+async def test_device_unreachable_issue_raised_after_threshold(coordinator, mock_client):
+    """After N consecutive failures, a repair issue surfaces; cleared on recovery."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.ashly.const import DOMAIN
+
+    await coordinator._async_setup()
+    mock_client.async_get_front_panel.side_effect = AshlyConnectionError("offline")
+
+    issue_id = f"device_unreachable_{coordinator.config_entry.entry_id}"
+    issue_reg = ir.async_get(coordinator.hass)
+    # Up to (but not at) the threshold: no issue yet.
+    for _ in range(_UNREACHABLE_REPAIR_THRESHOLD - 1):
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+    assert issue_reg.async_get_issue(DOMAIN, issue_id) is None
+
+    # At the threshold: issue appears.
+    with pytest.raises(UpdateFailed):
+        await coordinator._async_update_data()
+    assert issue_reg.async_get_issue(DOMAIN, issue_id) is not None
+    # And it doesn't double-create if we keep failing.
+    with pytest.raises(UpdateFailed):
+        await coordinator._async_update_data()
+    assert issue_reg.async_get_issue(DOMAIN, issue_id) is not None
+
+    # Recover: issue clears.
+    mock_client.async_get_front_panel.side_effect = None
+    await coordinator._async_update_data()
+    assert issue_reg.async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_repair_default_credentials_revaluated_per_poll(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """The default-credentials issue clears on a successful poll if creds were
+    updated on the device side."""
+    from homeassistant.const import CONF_PASSWORD
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.ashly.const import DOMAIN
+
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry)
+    await coord._async_setup()  # issue is raised (defaults)
+    issue_id = f"default_credentials_{mock_config_entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    # User updates credentials in HA via reconfigure flow:
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={**mock_config_entry.data, CONF_PASSWORD: "nondefault"},
+    )
+    # On the next poll, the per-poll re-evaluation clears the issue.
+    await coord._async_update_data()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None

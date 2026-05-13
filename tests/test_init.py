@@ -68,3 +68,21 @@ async def test_unload_entry(hass: HomeAssistant, mock_config_entry, _patch_clien
     await hass.async_block_till_done()
     assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
     assert mock_config_entry.state is ConfigEntryState.NOT_LOADED
+
+
+async def test_homeassistant_stop_stops_meter(
+    hass: HomeAssistant, mock_config_entry, _patch_client, patched_session
+) -> None:
+    """Firing EVENT_HOMEASSISTANT_STOP should call meter_client.async_stop()
+    so the websocket task winds down before the loop is torn down."""
+    from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+
+    mock_config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    # Capture the stub meter client that patched_session installed.
+    meter = mock_config_entry.runtime_data.meter_client
+    meter.async_stop.reset_mock()
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+    await hass.async_block_till_done()
+    meter.async_stop.assert_awaited()

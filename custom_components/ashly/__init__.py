@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import aiohttp
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
-from homeassistant.core import HomeAssistant
+from homeassistant.const import (
+    CONF_HOST,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    EVENT_HOMEASSISTANT_STOP,
+)
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
@@ -67,6 +72,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: AshlyConfigEntry) -> boo
     # Reload the entry whenever options change so a new poll interval takes
     # effect immediately.
     entry.async_on_unload(entry.add_update_listener(_async_reload_on_options))
+
+    # Stop the meter websocket *before* HA tears the event loop down. The
+    # regular async_unload_entry path still runs during shutdown (HA unloads
+    # each entry), but doing this on the bus event means the background
+    # asyncio task can't race the loop close and log spurious "Task was
+    # destroyed but it is pending" warnings.
+    async def _async_on_ha_stop(_event: Event) -> None:
+        await meter_client.async_stop()
+
+    entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_on_ha_stop))
     return True
 
 
@@ -93,6 +108,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: AshlyConfigEntry) -> bo
             await meter_client.async_stop()
         # Clear any repair issues this entry raised so they don't outlive it.
         ir.async_delete_issue(hass, DOMAIN, f"default_credentials_{entry.entry_id}")
+        ir.async_delete_issue(hass, DOMAIN, f"device_unreachable_{entry.entry_id}")
         # Drop services when no other Ashly entries remain.
         remaining = [
             e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id != entry.entry_id

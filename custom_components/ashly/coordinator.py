@@ -22,6 +22,7 @@ from .client import (
     AshlyAuthError,
     AshlyClient,
     AshlyConnectionError,
+    AshlyTimeoutError,
     ChainState,
     CrosspointState,
     DSPChannel,
@@ -45,6 +46,13 @@ _MAX_POLL_INTERVAL = 3600
 
 # Debounce window for refresh requests issued from entity write callbacks.
 _REFRESH_DEBOUNCE_SECONDS = 0.3
+
+# Consecutive coordinator update failures after which we raise the
+# "device unreachable" repair issue. At the default 30s poll, 20 polls
+# is ~10 minutes — long enough that transient blips don't surface as a
+# user-facing repair, short enough that a real outage (or DHCP-induced
+# IP change) shows up before the day's automations break.
+_UNREACHABLE_REPAIR_THRESHOLD = 20
 
 
 @dataclass(slots=True)
@@ -134,6 +142,9 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
         self.system_info: SystemInfo | None = None
         # Channel topology is fetched once at setup (it's static for the device).
         self._channels: dict[str, DSPChannel] = {}
+        # Tracks consecutive update failures for the unreachable repair issue.
+        self._consecutive_failures: int = 0
+        self._unreachable_issue_raised: bool = False
 
     async def _async_setup(self) -> None:
         """Fetch one-time data: system info + channel topology."""
@@ -188,6 +199,38 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
         else:
             ir.async_delete_issue(self.hass, DOMAIN, issue_id)
 
+    def _track_update_outcome(self, success: bool) -> None:
+        """Maintain the consecutive-failure counter + unreachable repair issue.
+
+        Called from `_async_update_data`'s success/failure paths. Once the
+        coordinator has missed `_UNREACHABLE_REPAIR_THRESHOLD` polls in a
+        row, a Warning-severity repair issue surfaces in Settings → Repairs
+        pointing the user at the reconfigure flow (in case the device's IP
+        has drifted via DHCP). Cleared on the first successful poll.
+        """
+        issue_id = f"device_unreachable_{self.config_entry.entry_id}"
+        if success:
+            self._consecutive_failures = 0
+            if self._unreachable_issue_raised:
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+                self._unreachable_issue_raised = False
+            return
+        self._consecutive_failures += 1
+        if (
+            self._consecutive_failures >= _UNREACHABLE_REPAIR_THRESHOLD
+            and not self._unreachable_issue_raised
+        ):
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="device_unreachable",
+                translation_placeholders={"host": self.client.host},
+            )
+            self._unreachable_issue_raised = True
+
     @property
     def channels(self) -> dict[str, DSPChannel]:
         """Channel topology, populated by `_async_setup`."""
@@ -204,7 +247,22 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
         The presets endpoint is treated as best-effort: a transient
         connection failure there reuses the last known list rather than
         tanking the whole poll. Other endpoints remain critical.
+
+        Repair issues are re-evaluated each poll so a credential change on
+        the device (admin/secret → custom) clears the default-credentials
+        issue on the next successful poll, not just at setup.
         """
+        try:
+            data = await self._do_update()
+        except Exception:
+            self._track_update_outcome(success=False)
+            raise
+        self._track_update_outcome(success=True)
+        self._evaluate_repair_issues()
+        return data
+
+    async def _do_update(self) -> AshlyDeviceData:
+        """The actual update logic; wrapped by `_async_update_data` for tracking."""
         if self.system_info is None:
             raise UpdateFailed("System info not available; setup did not run")
 
@@ -241,10 +299,23 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
                     )
                     raise ConfigEntryAuthFailed from r
 
-        # Critical endpoints: front_panel, chains, dvca, crosspoints. A
-        # failure of any of these tanks the poll.
+        prev = self.data
+
+        # Critical endpoints: front_panel, chains, dvca, crosspoints.
+        # A *full* connection error or API error on any of these tanks the
+        # poll. A per-endpoint timeout (subclass of connection error) is
+        # softened to "reuse last value" when we have one — a single
+        # endpoint timing out while the other three return cleanly is
+        # almost certainly a slow embedded CPU, not a dead device.
         for idx in range(4):
             r = results[idx]
+            if isinstance(r, AshlyTimeoutError) and prev is not None:
+                _LOGGER.debug(
+                    "[%s] %s timed out on a single endpoint; reusing last value",
+                    self.client.host,
+                    _TASK_LABELS[idx],
+                )
+                continue
             if isinstance(r, (AshlyAuthError, AshlyConnectionError, AshlyApiError)):
                 raise UpdateFailed(
                     f"[{self.client.host}] {_TASK_LABELS[idx]} update failed: {r}"
@@ -257,7 +328,6 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
         # Best-effort endpoints (slow-changing or non-critical for daily use):
         # reuse the prior value on a transient connection failure. API errors
         # still surface so a real bug isn't silently swallowed.
-        prev = self.data
 
         def _resolve(idx: int, fallback: Any) -> Any:
             r = results[idx]
@@ -274,6 +344,13 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
                 ) from r
             return r
 
+        def _critical(idx: int, fallback: Any) -> Any:
+            """Pick a critical result or the prior value if it timed out."""
+            r = results[idx]
+            if isinstance(r, AshlyTimeoutError):
+                return fallback
+            return r
+
         presets = _resolve(4, prev.presets if prev else [])
         phantom_power = _resolve(5, prev.phantom_power if prev else {})
         mic_preamp = _resolve(6, prev.mic_preamp_gain if prev else {})
@@ -283,11 +360,22 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
             prev.last_recalled_preset if prev else LastRecalledPreset(name=None, modified=False),
         )
 
-        # Critical results were checked for exceptions above; narrow types for mypy.
-        front_panel = cast(FrontPanelInfo, results[0])
-        chains = cast("dict[str, ChainState]", results[1])
-        dvca = cast("dict[int, DVCAState]", results[2])
-        crosspoints = cast("dict[tuple[int, int], CrosspointState]", results[3])
+        front_panel = cast(
+            FrontPanelInfo,
+            _critical(0, prev.front_panel if prev else None),
+        )
+        chains = cast(
+            "dict[str, ChainState]",
+            _critical(1, prev.chains if prev else None),
+        )
+        dvca = cast(
+            "dict[int, DVCAState]",
+            _critical(2, prev.dvca if prev else None),
+        )
+        crosspoints = cast(
+            "dict[tuple[int, int], CrosspointState]",
+            _critical(3, prev.crosspoints if prev else None),
+        )
         return AshlyDeviceData(
             system_info=self.system_info,
             front_panel=front_panel,

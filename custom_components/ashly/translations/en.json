@@ -139,6 +139,10 @@
     "default_credentials": {
       "title": "Ashly device is using factory-default credentials",
       "description": "The Ashly device at {host} is still using the factory-default username and password (admin / secret). This is a security concern on a networked audio device — anyone on the LAN can change presets, mute zones, or alter mixer routing. To resolve: change the password in the device's AquaControl Portal, then update Home Assistant via **Settings → Devices & services → Ashly Audio → Configure**."
+    },
+    "device_unreachable": {
+      "title": "Ashly device has been unreachable",
+      "description": "Home Assistant has not been able to reach the Ashly device at {host} for several polls. The most common causes are: the device powered off, a network/cable disruption, or the device's IP address changing (e.g. via DHCP renewal). If the IP has changed, update it via **Settings → Devices & services → Ashly Audio → Configure**. This issue will clear automatically on the next successful poll."
     }
   },
   "exceptions": {
