@@ -20,5 +20,3 @@ recall_preset:
       example: "Evening Mode"
       selector:
         text:
-  response:
-    optional: true
