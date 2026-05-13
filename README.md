@@ -64,34 +64,99 @@ entity counts will need to be made model-aware.
 
 ## Installation
 
+### Before you start
+
+You'll need:
+
+- **Home Assistant 2024.12.0 or newer.** Verify under **Settings → About**.
+- **HACS** already installed in your Home Assistant. If you don't have
+  HACS yet, follow the official [HACS installation
+  guide](https://www.hacs.xyz/docs/use/download/download/) first, then
+  come back here. (Or use the **Manual** install path below.)
+- **The device's IP address.** Find it on the AQM's front panel
+  (Menu → Network), or look up the lease in your router's DHCP table.
+  Write it down — you'll need it during setup.
+- **The device's admin password.** The factory default is `secret`
+  (username `admin`). If you've changed it via the AquaControl Portal,
+  use the new value. If you haven't changed it, this integration will
+  raise a repair issue prompting you to — the device controls audio for
+  whatever room it's in, so leaving factory creds on it is a real risk.
+- **Network reachability.** Home Assistant must be able to reach the
+  AQM on TCP ports **8000** (REST API) and **8001** (live-meter
+  socket.io stream). If HA and the device live on different VLANs,
+  this means firewall rules to permit the traffic — see [Known
+  limitations](#known-limitations) for details on why mDNS / DHCP
+  auto-discovery can't cross VLANs.
+- **Recent AquaControl Portal 2.0 firmware** on the device. The
+  integration is verified live against firmware **1.1.8**; older
+  firmware that lacks the `v1.0-beta` REST API isn't supported and
+  will fail setup with a "Device returned no MAC address" abort.
+
 ### HACS (recommended)
 
-1. Open HACS in your Home Assistant instance.
-2. Menu → **Custom repositories** → add this repo's URL with category
-   **Integration**.
-3. Search for "Ashly Audio" and install.
-4. **Restart Home Assistant.**
-5. **Settings → Devices & Services → Add Integration** → "Ashly Audio".
+1. Open HACS in your Home Assistant instance (**HACS** in the sidebar).
+2. Top-right ⋮ → **Custom repositories**.
+3. Add `https://github.com/limecooler/ha-ashly-aqm` with category
+   **Integration**, then click **Add**.
+4. Search for **Ashly Audio** in the HACS integration list and click
+   **Download** → **Download** again to confirm.
+5. **Restart Home Assistant** (Settings → System → ⋮ → Restart Home
+   Assistant).
+6. **Settings → Devices & Services → Add Integration** → search for
+   **Ashly Audio** → click it.
+7. On the setup form, enter the host (IP from the prereqs), keep port
+   `8000` and username `admin` unless you've changed them, and enter
+   the device password. See [Configuration](#configuration) for a
+   field-by-field reference.
+8. **Verify the install:** the integration tile should now appear under
+   **Settings → Devices & Services** with `1 device` and `~80 entities`
+   visible. Click into the tile, then **Configure** if you want to
+   change the polling interval; otherwise you're done.
 
 ### Manual
 
-1. Copy `custom_components/ashly/` into your HA `config/custom_components/`
-   directory.
-2. Restart Home Assistant.
-3. **Settings → Devices & Services → Add Integration** → "Ashly Audio".
+For users who don't run HACS, or want to test a branch/commit directly.
+
+1. Download the latest release ZIP from
+   [Releases](https://github.com/limecooler/ha-ashly-aqm/releases), or
+   `git clone https://github.com/limecooler/ha-ashly-aqm.git`.
+2. Copy the `custom_components/ashly/` directory into your Home
+   Assistant config directory at `config/custom_components/ashly/`
+   (create `custom_components/` if it doesn't exist).
+3. **Restart Home Assistant.**
+4. **Settings → Devices & Services → Add Integration** → search for
+   **Ashly Audio** → continue with steps 7–8 from the HACS install
+   above.
+
+### If setup fails
+
+- **"Could not connect"** — usually a network issue. Confirm Home
+  Assistant can reach the device by running `ping <ip>` from the host
+  HA runs on. If you're on a different VLAN, make sure the firewall
+  allows TCP 8000 + 8001. Don't enter a URL into the Host field —
+  just the IP or hostname.
+- **"Authentication failed"** — wrong username/password. If you've
+  forgotten the password, factory-reset the AQM via its front panel
+  and try `admin` / `secret`.
+- **"Device returned no MAC address"** — old firmware. Update via the
+  AquaControl Portal and retry.
+- **Anything else** — open a [bug report](https://github.com/limecooler/ha-ashly-aqm/issues/new/choose)
+  with the diagnostics download (Settings → Devices & Services →
+  Ashly Audio → ⋮ → **Download diagnostics**). Sensitive fields
+  (password, host, MAC) are auto-redacted.
 
 ### Removing the integration
 
-This integration follows the standard Home Assistant integration removal
-process. No additional steps are required.
+Standard HA removal flow; no manual cleanup required.
 
 1. **Settings → Devices & Services → Ashly Audio** → ⋮ → **Delete**.
-   Home Assistant unloads the integration, closes the device session and
-   the live-meter socket, and removes the device and all its entities
-   from the registry. No state remains on disk.
-2. (Optional, manual install only) Delete `custom_components/ashly/` from
-   your HA config directory and restart.
-3. (Optional, HACS install) HACS → **Ashly Audio** → ⋮ → **Remove**.
+   Home Assistant unloads the integration, closes the device session
+   and the live-meter socket, clears any open repair issues, and
+   removes the device and all its entities from the registry. No state
+   remains on disk.
+2. (Manual install only) Delete `custom_components/ashly/` from your
+   HA config directory and restart.
+3. (HACS install) HACS → **Ashly Audio** → ⋮ → **Remove**.
 
 The Ashly device itself is unaffected — its on-device presets, mixer
 state, and authentication credentials remain untouched.
