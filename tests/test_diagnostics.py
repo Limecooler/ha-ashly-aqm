@@ -42,6 +42,9 @@ async def test_diagnostics_contains_expected_top_level_keys(
     assert set(diag) == {
         "config_entry_data",
         "config_entry_options",
+        "coordinator",
+        "client",
+        "meter",
         "system_info",
         "front_panel",
         "power_on",
@@ -59,3 +62,54 @@ async def test_diagnostics_contains_expected_top_level_keys(
 
 def test_to_redact_set() -> None:
     assert {"password", "host", "mac_address"} == TO_REDACT
+
+
+async def test_diagnostics_includes_coordinator_health(hass: HomeAssistant, loaded_entry) -> None:
+    """Coordinator health metrics surface in diagnostics for bug reports."""
+    diag = await async_get_config_entry_diagnostics(hass, loaded_entry)
+    coord = diag["coordinator"]
+    assert coord["last_update_success"] is True
+    assert coord["consecutive_failures"] == 0
+    assert coord["unreachable_issue_raised"] is False
+    assert coord["update_interval_s"] == 30
+    assert coord["crosspoint_patches_pending"] == 0
+
+
+async def test_diagnostics_includes_coordinator_last_exception(
+    hass: HomeAssistant, loaded_entry, mock_client
+):
+    """If the coordinator has a last_exception, it surfaces in diagnostics."""
+    from custom_components.ashly.client import AshlyApiError
+
+    coordinator = loaded_entry.runtime_data.coordinator
+    coordinator.last_exception = AshlyApiError("boom-for-diagnostics")
+    diag = await async_get_config_entry_diagnostics(hass, loaded_entry)
+    assert "boom-for-diagnostics" in diag["coordinator"]["last_exception"]
+
+
+async def test_diagnostics_includes_client_auth_epoch(hass: HomeAssistant, loaded_entry) -> None:
+    diag = await async_get_config_entry_diagnostics(hass, loaded_entry)
+    assert "auth_epoch" in diag["client"]
+    assert "authenticated" in diag["client"]
+
+
+async def test_diagnostics_meter_section_reports_state(hass: HomeAssistant, loaded_entry) -> None:
+    diag = await async_get_config_entry_diagnostics(hass, loaded_entry)
+    meter = diag["meter"]
+    assert "connected" in meter
+    assert "latest_records_count" in meter
+
+
+async def test_diagnostics_with_null_meter_client(hass: HomeAssistant, loaded_entry) -> None:
+    """If meter_client is None (lifecycle race), diagnostics still render."""
+    loaded_entry.runtime_data.meter_client = None
+    diag = await async_get_config_entry_diagnostics(hass, loaded_entry)
+    assert diag["meter"]["connected"] is None
+    assert diag["meter"]["latest_records_count"] == 0
+
+
+async def test_diagnostics_with_no_update_interval(hass: HomeAssistant, loaded_entry) -> None:
+    """If update_interval has been cleared, diagnostics still render."""
+    loaded_entry.runtime_data.coordinator.update_interval = None
+    diag = await async_get_config_entry_diagnostics(hass, loaded_entry)
+    assert diag["coordinator"]["update_interval_s"] is None

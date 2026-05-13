@@ -187,6 +187,26 @@ async def test_recall_preset_device_on_unloaded_ashly_entry_raises(
         )
 
 
+async def test_recall_preset_service_returns_recalled_info(
+    hass: HomeAssistant, loaded_entry, mock_client
+):
+    """The service response includes the resolved preset name and target host."""
+    from homeassistant.helpers import device_registry as dr
+
+    device_reg = dr.async_get(hass)
+    device = next(iter(device_reg.devices.values()))
+    result = await hass.services.async_call(
+        DOMAIN,
+        SERVICE_RECALL_PRESET,
+        {"device_id": device.id, "preset": "1"},  # numeric -> resolves to "Preset 1"
+        blocking=True,
+        return_response=True,
+    )
+    assert result == {
+        "recalled": [{"host": mock_client.host, "preset": "Preset 1"}],
+    }
+
+
 async def test_recall_preset_client_error_raises(hass: HomeAssistant, loaded_entry, mock_client):
     """If the client raises AshlyError during recall, surface a HomeAssistantError."""
     from homeassistant.exceptions import HomeAssistantError

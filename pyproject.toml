@@ -1,8 +1,27 @@
 [project]
 name = "ha-ashly-aqm"
-version = "0.1.0"
-description = "Home Assistant integration for Ashly Audio AQM series zone mixers"
+version = "0.6.0"
+description = "Home Assistant integration for Ashly Audio AQM-series zone mixers (AQM1208, AQM408) via the AquaControl REST API + socket.io live-meter stream."
+readme = "README.md"
 requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Limecooler" }]
+keywords = [
+  "home-assistant",
+  "hacs",
+  "home-assistant-custom",
+  "integration",
+  "ashly",
+  "ashly-audio",
+  "aqm1208",
+  "aqm408",
+]
+
+[project.urls]
+Homepage = "https://github.com/limecooler/ha-ashly-aqm"
+Repository = "https://github.com/limecooler/ha-ashly-aqm"
+Issues = "https://github.com/limecooler/ha-ashly-aqm/issues"
+Changelog = "https://github.com/limecooler/ha-ashly-aqm/blob/main/CHANGELOG.md"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

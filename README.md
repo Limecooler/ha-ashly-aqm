@@ -270,30 +270,21 @@ per-entity from the entity-settings UI):
 
 ## Architecture
 
-```
-                AQM1208 device on the LAN
-                 │
-    ┌────────────┼────────────┐
-    │            │            │
- port 8000   port 8001     port 80
- REST        socket.io     web UI (browser only,
- cookie-     live meter    not used by this integration)
- authed      stream
-    │            │
-    ▼            ▼
- AshlyClient    AshlyMeterClient
- (aiohttp)      (python-socketio)
-    │            │
-    │            └── 1 Hz publish → 24 ChannelMeterSensor entities
-    │
-    ▼
- AshlyCoordinator
- (DataUpdateCoordinator)
- 30 s poll: power, chains, dvca, crosspoints,
- presets, phantom power, mic preamp, gpo, last-recalled
-    │
-    ▼
- Entity platforms: switch, number, select, button, sensor
+```mermaid
+flowchart TD
+    Device["AQM1208 device on the LAN"]
+    Device -->|"port 8000<br>REST, cookie auth"| Client["AshlyClient<br>(aiohttp)"]
+    Device -->|"port 8001<br>socket.io"| MeterClient["AshlyMeterClient<br>(python-socketio)"]
+    Device -.->|"port 80, web UI<br>(not used)"| Browser["AquaControl Portal<br>(browser only)"]
+
+    Client --> Coordinator["AshlyCoordinator<br>DataUpdateCoordinator<br>30 s poll: power, chains, dvca,<br>crosspoints, presets, phantom,<br>mic preamp, gpo, last-recalled"]
+    MeterClient -->|"1 Hz publish"| MeterSensors["24 ChannelMeterSensor entities"]
+
+    Coordinator --> Switch[switch]
+    Coordinator --> Number[number]
+    Coordinator --> Select[select]
+    Coordinator --> Button[button]
+    Coordinator --> Sensor[sensor]
 ```
 
 **Cookie auth (`port 8000`)** — primary control path. The integration logs in

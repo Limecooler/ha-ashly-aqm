@@ -13,7 +13,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import voluptuous as vol
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+    callback,
+)
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 
@@ -40,12 +46,13 @@ def async_register_services(hass: HomeAssistant) -> None:
     if hass.services.has_service(DOMAIN, SERVICE_RECALL_PRESET):
         return
 
-    async def _recall_preset(call: ServiceCall) -> None:
+    async def _recall_preset(call: ServiceCall) -> ServiceResponse:
         preset = str(call.data["preset"]).strip()
         device_ids = call.data["device_id"]
         if isinstance(device_ids, str):
             device_ids = [device_ids]
 
+        recalled: list[dict[str, str]] = []
         device_reg = dr.async_get(hass)
         entries: list[AshlyConfigEntry] = []
         for device_id in device_ids:
@@ -108,13 +115,21 @@ def async_register_services(hass: HomeAssistant) -> None:
                     translation_key="device_error",
                     translation_placeholders={"error": str(err)},
                 ) from err
+            recalled.append({"host": client.host, "preset": resolved})
             # Refresh the coordinator so `last_recalled_preset` and any
             # state that changed (mutes, levels, mixer assignments)
             # propagates to HA promptly.
             await coordinator.async_request_refresh()
 
+        # Cast to ServiceResponse: list-of-string-dicts is valid JSON.
+        return {"recalled": recalled}  # type: ignore[dict-item]
+
     hass.services.async_register(
-        DOMAIN, SERVICE_RECALL_PRESET, _recall_preset, schema=RECALL_PRESET_SCHEMA
+        DOMAIN,
+        SERVICE_RECALL_PRESET,
+        _recall_preset,
+        schema=RECALL_PRESET_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
     )
 
 
