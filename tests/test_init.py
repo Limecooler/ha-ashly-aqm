@@ -74,51 +74,66 @@ async def test_multi_device_setup_and_unload(
     hass: HomeAssistant, mock_client, patched_session
 ) -> None:
     """Two Ashly entries can coexist; services register once and only deregister
-    on the last unload."""
+    on the last unload. Each device gets its own distinct identity."""
+    import dataclasses
+
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+    from custom_components.ashly.client import SystemInfo
     from custom_components.ashly.const import DOMAIN
     from custom_components.ashly.services import SERVICE_RECALL_PRESET
 
+    info_a = SystemInfo(
+        model="AQM1208",
+        name="Living Room",
+        firmware_version="1.1.8",
+        hardware_revision="1.0.0",
+        mac_address="00:14:aa:11:22:33",
+        has_auto_mix=True,
+    )
+    info_b = dataclasses.replace(info_a, name="Kitchen", mac_address="00:14:aa:44:55:66")
+
+    # Build a second client identical to the first but with a different MAC.
+    import copy
+
+    client_b = copy.copy(mock_client)
+    client_b.host = "192.168.1.101"
+    client_b.async_get_system_info = mock_client.async_login.__class__(return_value=info_b)
+    # Re-stub other reads (they share the same dataclass instances from fixtures,
+    # which is fine because they don't carry identity).
+    mock_client.async_get_system_info.return_value = info_a
+
     entry_a = MockConfigEntry(
         domain=DOMAIN,
-        data={
-            "host": "192.168.1.100",
-            "port": 8000,
-            "username": "admin",
-            "password": "secret",
-        },
+        data={"host": "192.168.1.100", "port": 8000, "username": "admin", "password": "secret"},
         unique_id="00:14:aa:11:22:33",
         title="Living Room",
     )
     entry_b = MockConfigEntry(
         domain=DOMAIN,
-        data={
-            "host": "192.168.1.101",
-            "port": 8000,
-            "username": "admin",
-            "password": "secret",
-        },
+        data={"host": "192.168.1.101", "port": 8000, "username": "admin", "password": "secret"},
         unique_id="00:14:aa:44:55:66",
         title="Kitchen",
     )
     entry_a.add_to_hass(hass)
     entry_b.add_to_hass(hass)
-    with patch("custom_components.ashly.AshlyClient", return_value=mock_client):
+
+    # Patch AshlyClient to return the right mock based on host.
+    def _client_factory(host, port, **_kw):
+        return client_b if host == "192.168.1.101" else mock_client
+
+    with patch("custom_components.ashly.AshlyClient", side_effect=_client_factory):
         assert await hass.config_entries.async_setup(entry_a.entry_id)
+        await hass.async_block_till_done()
         assert await hass.config_entries.async_setup(entry_b.entry_id)
         await hass.async_block_till_done()
 
-    # Both entries loaded; service registered once.
     assert entry_a.state is ConfigEntryState.LOADED
     assert entry_b.state is ConfigEntryState.LOADED
     assert hass.services.has_service(DOMAIN, SERVICE_RECALL_PRESET)
 
-    # Unload one — service stays.
     assert await hass.config_entries.async_unload(entry_a.entry_id)
     assert hass.services.has_service(DOMAIN, SERVICE_RECALL_PRESET)
-
-    # Unload the second — service goes away.
     assert await hass.config_entries.async_unload(entry_b.entry_id)
     assert not hass.services.has_service(DOMAIN, SERVICE_RECALL_PRESET)
 

@@ -53,12 +53,9 @@ async def test_async_get_triggers_empty_when_sensor_missing(hass: HomeAssistant,
 
 async def test_async_attach_trigger_fires_on_state_change(hass: HomeAssistant, loaded_entry):
     """Attaching a trigger and changing the sensor state fires the action."""
-    from homeassistant.components.automation import async_attach_trigger
     from homeassistant.helpers.trigger import TriggerInfo
 
-    from custom_components.ashly.device_trigger import async_attach_trigger as ashly_attach
-
-    _ = async_attach_trigger  # used only to satisfy import linting
+    from custom_components.ashly.device_trigger import async_attach_trigger
 
     device_reg = dr.async_get(hass)
     ent_reg = er.async_get(hass)
@@ -74,7 +71,7 @@ async def test_async_attach_trigger_fires_on_state_change(hass: HomeAssistant, l
     async def action(variables, context=None):
         captured.append(variables)
 
-    remove = await ashly_attach(
+    remove = await async_attach_trigger(
         hass,
         {
             "platform": "device",
@@ -86,7 +83,6 @@ async def test_async_attach_trigger_fires_on_state_change(hass: HomeAssistant, l
         TriggerInfo(domain="automation", name="test", home_assistant_start=False),  # type: ignore[typeddict-item]
     )
     try:
-        # Force a state transition on the entity.
         hass.states.async_set(entity_id, "Evening Mode")
         await hass.async_block_till_done()
         hass.states.async_set(entity_id, "Late Night")
