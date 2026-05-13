@@ -201,7 +201,7 @@ class AshlyChannelMeterSensor(AshlyEntity, SensorEntity):
             translation_key = "input_meter"
         elif kind == "mixer":
             meter_index = NUM_INPUTS + channel - 1  # positions 12..23
-            translation_key = "output_meter"
+            translation_key = "mixer_input_meter"
         else:
             raise ValueError(f"Unknown meter kind: {kind!r}")
         super().__init__(

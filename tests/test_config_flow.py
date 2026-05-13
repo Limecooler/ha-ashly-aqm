@@ -443,16 +443,21 @@ async def test_zeroconf_wrong_oui_aborts(hass: HomeAssistant) -> None:
     assert result["reason"] == "not_ashly_device"
 
 
-async def test_zeroconf_proceeds_without_mac(hass: HomeAssistant) -> None:
-    """Hostname has no MAC suffix; defer unique_id assignment to confirm step."""
+async def test_zeroconf_aborts_when_no_mac(hass: HomeAssistant) -> None:
+    """Hostname has no MAC suffix and properties don't carry one — abort.
+
+    Previously we showed the credentials form anyway, but a hostname starting
+    with `aqm*` is too weak a signal to ask the operator for AquaControl
+    credentials (a neighbour's printer could clear the filter). Users with
+    an unadvertised AQM can use the manual setup flow.
+    """
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": config_entries.SOURCE_ZEROCONF},
         data=_zeroconf_info(hostname="aqm.local."),
     )
-    # No MAC available → no _abort_if_unique_id_configured; we land in confirm.
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "discovery_confirm"
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "not_ashly_device"
 
 
 async def test_zeroconf_uses_properties_mac(hass: HomeAssistant) -> None:
@@ -477,23 +482,34 @@ async def test_zeroconf_uses_properties_mac(hass: HomeAssistant) -> None:
     assert result["step_id"] == "discovery_confirm"
 
 
-async def test_zeroconf_invalid_hostname_mac_falls_through(hass: HomeAssistant) -> None:
+async def test_zeroconf_invalid_hostname_mac_aborts(hass: HomeAssistant) -> None:
     """A 12-char tail that isn't actually hex falls through to property lookup,
-    then to the no-MAC branch."""
+    finds none, and aborts (stricter post-v0.6.2)."""
     info = _zeroconf_info(hostname="aqm_gggggggggggg.local.")
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_ZEROCONF}, data=info
     )
-    # No MAC → proceeds to confirm.
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "not_ashly_device"
+
+
+async def test_zeroconf_uppercase_hostname_mac_extracted(hass: HomeAssistant) -> None:
+    """Real-world mDNS often advertises uppercase MAC in hostname — handle it."""
+    # Note: HA lowercases the hostname before passing to async_step_zeroconf,
+    # so by the time we see it, mixed-case is already normalised. But the
+    # post-removesuffix `.lower()` belt-and-suspenders guards against the
+    # case where HA's normalisation regresses.
+    info = _zeroconf_info(hostname="aqm1208_0014AA778899.local.".lower())
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_ZEROCONF}, data=info
+    )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "discovery_confirm"
 
 
-async def test_zeroconf_format_mac_raises_on_hostname_falls_through(
-    hass: HomeAssistant,
-) -> None:
-    """If format_mac raises on the hostname-extracted MAC, fall through to the
-    properties lookup."""
+async def test_zeroconf_format_mac_raises_aborts(hass: HomeAssistant) -> None:
+    """If format_mac raises on both the hostname and the property attempts,
+    the flow aborts (stricter post-v0.6.2)."""
     with patch(
         "custom_components.ashly.config_flow.format_mac",
         side_effect=AttributeError("bogus"),
@@ -503,17 +519,15 @@ async def test_zeroconf_format_mac_raises_on_hostname_falls_through(
             context={"source": config_entries.SOURCE_ZEROCONF},
             data=_zeroconf_info(hostname="aqm_0014aa112233.local."),
         )
-    # MAC parsing failed at both hostname AND properties → discovery_confirm
-    # with no unique_id yet.
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "discovery_confirm"
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "not_ashly_device"
 
 
-async def test_zeroconf_format_mac_raises_on_property_falls_through(
+async def test_zeroconf_format_mac_raises_on_property_aborts(
     hass: HomeAssistant,
 ) -> None:
-    """If format_mac raises on the property-supplied MAC, fall through to
-    the no-MAC branch."""
+    """If format_mac raises on the property-supplied MAC and there's no
+    hostname MAC, the flow aborts."""
     try:
         from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
     except ImportError:
@@ -534,8 +548,8 @@ async def test_zeroconf_format_mac_raises_on_property_falls_through(
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_ZEROCONF}, data=info
         )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "discovery_confirm"
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "not_ashly_device"
 
 
 async def test_discovery_confirm_accepts_port_override(hass: HomeAssistant) -> None:

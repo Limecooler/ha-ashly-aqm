@@ -212,10 +212,12 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="not_ashly_device")
 
         # Extract MAC from the hostname suffix (`aqm1208_0014AA112233.local.`).
+        # Lower-case the tail before the hex check; real-world advertisements
+        # mix cases (DHCP example uses 0014AA112233 upper).
         mac: str | None = None
         bare = hostname.removesuffix(".local.").removesuffix(".local")
         if "_" in bare:
-            tail = bare.rsplit("_", 1)[-1]
+            tail = bare.rsplit("_", 1)[-1].lower()
             if len(tail) == 12 and all(c in "0123456789abcdef" for c in tail):
                 try:
                     mac = format_mac(tail)
@@ -234,16 +236,11 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
                     mac = None
 
         if mac is None:
-            # No MAC available; skip the OUI prefix check but defer unique-id
-            # assignment until discovery_confirm probes the device.
-            self._discovered_host = host
-            self._discovered_port = DEFAULT_PORT
-            if "_" in bare:
-                self._discovered_model = bare.split("_")[0].upper()
-            self.context["title_placeholders"] = {
-                "name": f"Ashly {self._discovered_model or 'Audio'}"
-            }
-            return await self.async_step_discovery_confirm()
+            # No MAC extractable. We refuse to show a credentials form for an
+            # unidentified device — a neighbour's printer named "aqm-foo"
+            # would otherwise prompt the operator for AquaControl credentials.
+            # The user can still add the device via the manual setup path.
+            return self.async_abort(reason="not_ashly_device")
 
         if not mac.replace(":", "").upper().startswith(ASHLY_MAC_PREFIX):
             return self.async_abort(reason="not_ashly_device")

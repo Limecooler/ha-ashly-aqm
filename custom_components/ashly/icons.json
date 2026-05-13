@@ -75,7 +75,7 @@
       "input_meter": {
         "default": "mdi:waveform"
       },
-      "output_meter": {
+      "mixer_input_meter": {
         "default": "mdi:waveform"
       }
     }

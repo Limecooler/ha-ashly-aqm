@@ -15,7 +15,7 @@
   "loggers": ["custom_components.ashly"],
   "quality_scale": "platinum",
   "requirements": ["python-socketio[asyncio_client]>=5.10"],
-  "version": "0.6.1",
+  "version": "0.6.2",
   "zeroconf": [
     { "type": "_http._tcp.local.", "name": "aqm*" },
     { "type": "_http._tcp.local.", "name": "ashly*" }

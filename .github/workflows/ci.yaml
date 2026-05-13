@@ -17,6 +17,15 @@ jobs:
       - run: pip install ruff
       - run: ruff check custom_components/ tests/
       - run: ruff format --check custom_components/ tests/
+      # strings.json is the HA-core source-of-truth; translations/en.json
+      # is the compiled English file. They must stay byte-identical until
+      # we wire up a real generator.
+      - name: strings.json ↔ translations/en.json sync
+        run: |
+          python -c "import json; \
+            a = json.load(open('custom_components/ashly/strings.json')); \
+            b = json.load(open('custom_components/ashly/translations/en.json')); \
+            assert a == b, 'strings.json and translations/en.json have drifted — sync them.'"
 
   typecheck:
     runs-on: ubuntu-latest

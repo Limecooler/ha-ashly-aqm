@@ -45,7 +45,7 @@ on port 8001 for live signal-level meters.
 - **Multi-device support** — each AQM gets its own config entry
 - **Reauth** flow when credentials fail
 - **Reconfigure** flow for IP / port / credential changes
-- **Options flow** — configurable polling interval (5–300 s, default 30 s)
+- **Options flow** — configurable polling interval (10–300 s, default 30 s)
 
 ---
 
@@ -131,7 +131,7 @@ Concrete things people actually do with this integration:
 The integration uses two complementary update paths:
 
 1. **REST polling (most state).** A `DataUpdateCoordinator` polls the
-   device's REST API on the configured interval (default 30 s; 5–300 s
+   device's REST API on the configured interval (default 30 s; 10–300 s
    via the integration options). One poll fetches the front panel,
    chain state, DCA state, crosspoints, presets, phantom-power state,
    mic-preamp gains, GPO state, and last-recalled preset — concurrently.
@@ -200,7 +200,7 @@ transparent re-authentication on the next request.
 
 ### Options
 
-- **Polling interval** (5–300 seconds, default 30) — how often the
+- **Polling interval** (10–300 seconds, default 30) — how often the
   coordinator polls REST state. Changing it triggers an automatic reload.
 
 ### Discovery

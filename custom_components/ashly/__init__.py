@@ -102,13 +102,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: AshlyConfigEntry) -> bo
     unloads.
     """
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    # Always clear repair issues — even when platform unload partially failed
+    # we don't want orphaned issues in the registry pointing at a dead entry.
+    ir.async_delete_issue(hass, DOMAIN, f"default_credentials_{entry.entry_id}")
+    ir.async_delete_issue(hass, DOMAIN, f"device_unreachable_{entry.entry_id}")
     if unload_ok:
         meter_client = entry.runtime_data.meter_client
         if meter_client is not None:
             await meter_client.async_stop()
-        # Clear any repair issues this entry raised so they don't outlive it.
-        ir.async_delete_issue(hass, DOMAIN, f"default_credentials_{entry.entry_id}")
-        ir.async_delete_issue(hass, DOMAIN, f"device_unreachable_{entry.entry_id}")
         # Drop services when no other Ashly entries remain.
         remaining = [
             e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id != entry.entry_id

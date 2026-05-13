@@ -4,6 +4,69 @@ All notable changes to this integration are documented here. Versioning loosely
 follows [Semantic Versioning](https://semver.org/) with the caveat that the
 `<major>.<minor>.<patch>` field also drives HA's HACS update notifications.
 
+## 0.6.2 — 2026-05-13
+
+Second-pass UX polish driven by a follow-up onboarding review. Fixes
+bugs the first review missed and tightens corners introduced by v0.6.1.
+
+### Bug fixes
+
+- **`configuration_url` was pointing at port 8000** (the REST API + Swagger
+  page), not the user-facing AquaControl Portal on port 80. Clicking
+  "Visit device" from the integration's device card now lands on the
+  actual web UI.
+- **Channel meter sensor for mixer-input was rendered as "Output N level"**
+  — but it's neither an output nor in the spot that name implies. Renamed
+  the translation key from `output_meter` to `mixer_input_meter`; the
+  entity name now reads "Mixer input N level", consistent with the
+  device's own metering terminology and the README.
+- **README still claimed the poll-interval range was 5–300 s** despite
+  v0.6.1 raising the floor to 10. All three references in the README are
+  now `10–300`.
+- **`unique_id_mismatch` abort copy claimed "the MAC has changed"** which
+  is technically impossible — what changed is that the IP now points at
+  a *different* device. Reworded to explain that explicitly.
+- **`repairs.py` imported aiohttp + the session helper inside the function
+  body**, which pushed an import cost to the user mid-fix. Moved to module
+  scope (HA-core convention).
+
+### Discovery
+
+- **Zeroconf hostname MAC extraction was lower-case only.** Hostnames in
+  the real world mix cases; the DHCP example fixture uses upper
+  (`aqm1208_0014AA112233`). Now lower-cases the tail before the hex check.
+- **No-MAC zeroconf path now aborts instead of showing a credentials form.**
+  A neighbour's printer named `aqm-foo.local` would have cleared the manifest
+  filter and prompted the operator for AquaControl credentials. Users with
+  an unadvertised AQM can still use the manual setup flow.
+
+### Repair UX
+
+- **`default_credentials` fix-flow title now names the device.** Users
+  with two AQMs both flagged for default credentials now see "Update
+  credentials for Living Room" vs "Update credentials for Kitchen"
+  rather than two identical "Update Ashly device credentials" dialogs.
+- **Repair issues are cleared even when platform unload fails.** Moved
+  the `ir.async_delete_issue` calls outside the `if unload_ok:` block so
+  orphaned issues can't outlive a partially-failed entry removal.
+
+### Entity naming
+
+- **DCA entities surface device-side names.** If the user has named DCA 1
+  "Bar" in AquaControl Portal, the entity name now reads "Bar mute" / "Bar
+  level" rather than "DCA 1 mute" / "DCA 1 level". Falls back to "DCA N"
+  when the device has the default name. Single biggest improvement from
+  "engineer's tool" to "operator's tool".
+
+### CI
+
+- New lint job step verifies `strings.json` and `translations/en.json`
+  are byte-identical (HA-core convention for source-of-truth + compiled
+  copy). Prevents silent drift in future PRs.
+
+100% coverage maintained; new tests cover the zeroconf strictness and
+the no-MAC abort path.
+
 ## 0.6.1 — 2026-05-13
 
 UX-focused release driven by an onboarding review. No breaking changes for

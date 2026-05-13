@@ -42,5 +42,9 @@ class AshlyEntity(CoordinatorEntity[AshlyCoordinator]):
             model=info.model,
             sw_version=info.firmware_version,
             hw_version=info.hardware_revision or None,
-            configuration_url=(f"http://{coordinator.client.host}:{coordinator.client.port}"),
+            # Point at the AquaControl Portal (the user-facing web UI on
+            # port 80), not the REST API port (8000) — the latter serves
+            # only the Swagger documentation at /documentation, and lands
+            # users on a 404 or a JSON blob otherwise.
+            configuration_url=f"http://{coordinator.client.host}",
         )

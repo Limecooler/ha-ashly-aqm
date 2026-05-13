@@ -15,11 +15,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import aiohttp
 import voluptuous as vol
 from homeassistant.components.repairs import RepairsFlow
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.selector import (
     TextSelector,
     TextSelectorConfig,
@@ -67,9 +69,6 @@ class DefaultCredentialsRepairFlow(RepairsFlow):
         port = int(entry.data.get(CONF_PORT, DEFAULT_PORT))
 
         if user_input is not None:
-            import aiohttp
-            from homeassistant.helpers.aiohttp_client import async_create_clientsession
-
             session = async_create_clientsession(
                 self._hass, cookie_jar=aiohttp.CookieJar(unsafe=True)
             )
@@ -103,7 +102,10 @@ class DefaultCredentialsRepairFlow(RepairsFlow):
         return self.async_show_form(
             step_id="init",
             data_schema=NEW_CREDS_SCHEMA,
-            description_placeholders={"host": host},
+            description_placeholders={
+                "name": entry.title,
+                "host": host,
+            },
             errors=errors,
         )
 

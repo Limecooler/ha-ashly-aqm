@@ -92,7 +92,15 @@ class AshlyDVCALevelNumber(AshlyEntity, NumberEntity):
             ),
         )
         self._index = index
-        self._attr_translation_placeholders = {"group_number": str(index)}
+        # Surface the device-side DCA name when set (see AshlyDVCAMuteSwitch
+        # for rationale).
+        dvca_state = coordinator.data.dvca.get(index) if coordinator.data is not None else None
+        name = (
+            dvca_state.name
+            if dvca_state and dvca_state.name and dvca_state.name != f"DCA {index}"
+            else f"DCA {index}"
+        )
+        self._attr_translation_placeholders = {"name": name}
 
     @property
     def native_value(self) -> float | None:

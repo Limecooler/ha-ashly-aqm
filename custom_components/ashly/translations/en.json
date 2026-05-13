@@ -65,7 +65,7 @@
       "already_configured": "This Ashly device is already configured. To add a different Ashly device, ensure each device has a unique MAC address on the network.",
       "reauth_successful": "Re-authentication was successful.",
       "reconfigure_successful": "Reconfiguration was successful.",
-      "unique_id_mismatch": "The device at this address is different from the one originally configured (its MAC has changed). Remove the existing entry and add the new device fresh.",
+      "unique_id_mismatch": "The IP address you supplied now points at a different Ashly device (different MAC) than the one this entry was originally configured against. Either correct the IP back to the original device, or remove this entry and add the new device as a fresh setup.",
       "not_ashly_device": "The discovered device is not an Ashly audio processor.",
       "no_mac": "The device responded but didn't include a MAC address. This typically means the device is running firmware older than 1.1.0, or the AquaControl API is in maintenance mode. Update the device's firmware via AquaControl Portal and try again."
     }
@@ -92,7 +92,7 @@
         "name": "Output {channel_number} mute"
       },
       "dvca_mute": {
-        "name": "DCA {group_number} mute"
+        "name": "{name} mute"
       },
       "crosspoint_mute": {
         "name": "Mixer {mixer_number} input {input_number} mute"
@@ -109,7 +109,7 @@
     },
     "number": {
       "dvca_level": {
-        "name": "DCA {group_number} level"
+        "name": "{name} level"
       },
       "crosspoint_level": {
         "name": "Mixer {mixer_number} input {input_number} level"
@@ -141,8 +141,8 @@
       "input_meter": {
         "name": "Input {channel_number} level"
       },
-      "output_meter": {
-        "name": "Output {channel_number} level"
+      "mixer_input_meter": {
+        "name": "Mixer input {channel_number} level"
       }
     }
   },
@@ -152,8 +152,8 @@
       "fix_flow": {
         "step": {
           "init": {
-            "title": "Update Ashly device credentials",
-            "description": "The Ashly device at {host} is using the factory password `secret`. This is a security risk on a networked audio device — anyone on the LAN can change presets, mute zones, or alter mixer routing.\n\nTo fix:\n1. Change the password on the device using the AquaControl Portal web UI.\n2. Enter the new credentials below; Home Assistant will reconnect with the updated password.",
+            "title": "Update credentials for {name}",
+            "description": "The Ashly device {name} at {host} is using the factory password `secret`. This is a security risk on a networked audio device — anyone on the LAN can change presets, mute zones, or alter mixer routing.\n\nTo fix:\n1. Change the password on the device using the AquaControl Portal web UI.\n2. Enter the new credentials below; Home Assistant will reconnect with the updated password.",
             "data": {
               "username": "Username",
               "password": "New password"

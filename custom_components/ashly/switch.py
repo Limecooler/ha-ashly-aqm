@@ -200,7 +200,18 @@ class AshlyDVCAMuteSwitch(AshlyEntity, SwitchEntity):
             ),
         )
         self._index = index
-        self._attr_translation_placeholders = {"group_number": str(index)}
+        # Surface the device-side DCA name when the user has set one (e.g.
+        # "Bar", "Patio") so entity names match the operator's mental
+        # model. Fall back to "DCA <index>" when the device has the default
+        # name. Reads coordinator.data populated by the first-refresh
+        # that already completed before platform setup forwards entities.
+        dvca_state = coordinator.data.dvca.get(index) if coordinator.data is not None else None
+        name = (
+            dvca_state.name
+            if dvca_state and dvca_state.name and dvca_state.name != f"DCA {index}"
+            else f"DCA {index}"
+        )
+        self._attr_translation_placeholders = {"name": name}
 
     @property
     def is_on(self) -> bool:
