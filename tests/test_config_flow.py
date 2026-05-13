@@ -489,6 +489,55 @@ async def test_zeroconf_invalid_hostname_mac_falls_through(hass: HomeAssistant) 
     assert result["step_id"] == "discovery_confirm"
 
 
+async def test_zeroconf_format_mac_raises_on_hostname_falls_through(
+    hass: HomeAssistant,
+) -> None:
+    """If format_mac raises on the hostname-extracted MAC, fall through to the
+    properties lookup."""
+    with patch(
+        "custom_components.ashly.config_flow.format_mac",
+        side_effect=AttributeError("bogus"),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_ZEROCONF},
+            data=_zeroconf_info(hostname="aqm_0014aa112233.local."),
+        )
+    # MAC parsing failed at both hostname AND properties → discovery_confirm
+    # with no unique_id yet.
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "discovery_confirm"
+
+
+async def test_zeroconf_format_mac_raises_on_property_falls_through(
+    hass: HomeAssistant,
+) -> None:
+    """If format_mac raises on the property-supplied MAC, fall through to
+    the no-MAC branch."""
+    try:
+        from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
+    except ImportError:
+        from homeassistant.components.zeroconf import ZeroconfServiceInfo
+    info = ZeroconfServiceInfo(
+        ip_address="192.168.1.50",  # type: ignore[arg-type]
+        ip_addresses=["192.168.1.50"],  # type: ignore[list-item]
+        port=80,
+        hostname="aqm.local.",
+        type="_http._tcp.local.",
+        name="aqm.local.",
+        properties={"mac": "valid-but-format-mac-will-fail"},
+    )
+    with patch(
+        "custom_components.ashly.config_flow.format_mac",
+        side_effect=TypeError("nope"),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_ZEROCONF}, data=info
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "discovery_confirm"
+
+
 async def test_discovery_confirm_accepts_port_override(hass: HomeAssistant) -> None:
     """User can change the port in the discovery confirm dialog."""
     try:
