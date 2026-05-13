@@ -1109,3 +1109,81 @@ async def test_get_gpo_skips_bad_entries(client):
         )
         gpo = await client.async_get_gpo()
     assert gpo == {1: True}
+
+
+# ── Body-read failure paths in _parse_json + _request_once ─────────────
+
+
+async def test_parse_json_body_read_failure_yields_placeholder(client):
+    """When the JSON-decode fails and the text() fallback also fails, the
+    error message uses '<unable to read body>'.
+
+    Exercised directly because aioresponses doesn't let us simulate text() raising.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    resp = MagicMock()
+    resp.json = AsyncMock(side_effect=aiohttp.ContentTypeError(MagicMock(), tuple()))
+    resp.text = AsyncMock(side_effect=aiohttp.ClientError("conn dropped"))
+    with pytest.raises(AshlyApiError, match="unable to read body"):
+        await client._parse_json(resp)
+
+
+async def test_request_once_error_body_read_failure_yields_placeholder(client):
+    """If the HTTP response is an error AND text() raises, the AshlyApiError
+    message includes the '<unable to read body>' sentinel.
+    """
+    import contextlib
+    from unittest.mock import AsyncMock, MagicMock
+
+    fake_resp = MagicMock()
+    fake_resp.status = 500
+    fake_resp.text = AsyncMock(side_effect=aiohttp.ClientError("conn dropped"))
+
+    @contextlib.asynccontextmanager
+    async def fake_request(*a, **kw):
+        yield fake_resp
+
+    with (
+        patch_object_request(client, fake_request),
+        pytest.raises(AshlyApiError, match="unable to read body"),
+    ):
+        await client._request_once("GET", "/whatever")
+
+
+async def test_request_defensive_double_401_raises_auth_error(client):
+    """If retry_auth=False call still flags retry_again=True (shouldn't normally
+    happen), the _request method raises the defensive AshlyAuthError.
+    """
+    from unittest.mock import AsyncMock
+
+    calls = {"n": 0}
+
+    async def fake_once(method, path, *, json=None, retry_auth=True):
+        calls["n"] += 1
+        # Both calls return need_retry=True regardless of retry_auth — simulates
+        # a bug where the flag is ignored.
+        return None, True, 0
+
+    client._request_once = AsyncMock(side_effect=fake_once)
+    client.async_login = AsyncMock()
+    with pytest.raises(AshlyAuthError, match="Re-auth did not unblock"):
+        await client._request("GET", "/whatever")
+    assert calls["n"] == 2
+
+
+# Helper used by test_request_once_error_body_read_failure_yields_placeholder
+def patch_object_request(client, replacement):
+    """Replace client._session.request with `replacement`, restore on exit."""
+    import contextlib
+
+    @contextlib.contextmanager
+    def _swap():
+        original = client._session.request
+        client._session.request = replacement
+        try:
+            yield
+        finally:
+            client._session.request = original
+
+    return _swap()
