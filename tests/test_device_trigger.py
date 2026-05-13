@@ -71,6 +71,12 @@ async def test_async_attach_trigger_fires_on_state_change(hass: HomeAssistant, l
     async def action(variables, context=None):
         captured.append(variables)
 
+    trigger_info: TriggerInfo = {  # type: ignore[typeddict-item]
+        "domain": "automation",
+        "name": "test",
+        "home_assistant_start": False,
+        "trigger_data": {"id": "test", "idx": "0"},
+    }
     remove = await async_attach_trigger(
         hass,
         {
@@ -80,7 +86,7 @@ async def test_async_attach_trigger_fires_on_state_change(hass: HomeAssistant, l
             "type": "preset_recalled",
         },
         action,
-        TriggerInfo(domain="automation", name="test", home_assistant_start=False),  # type: ignore[typeddict-item]
+        trigger_info,
     )
     try:
         hass.states.async_set(entity_id, "Evening Mode")
@@ -104,6 +110,12 @@ async def test_async_attach_trigger_raises_when_no_entity(hass: HomeAssistant, l
     for entry in list(er.async_entries_for_device(ent_reg, device.id)):
         if entry.unique_id.endswith("_last_recalled_preset"):
             ent_reg.async_remove(entry.entity_id)
+    trigger_info: TriggerInfo = {  # type: ignore[typeddict-item]
+        "domain": "automation",
+        "name": "test",
+        "home_assistant_start": False,
+        "trigger_data": {"id": "test", "idx": "0"},
+    }
     with pytest.raises(ValueError, match="No last_recalled_preset"):
         await async_attach_trigger(
             hass,
@@ -114,7 +126,7 @@ async def test_async_attach_trigger_raises_when_no_entity(hass: HomeAssistant, l
                 "type": "preset_recalled",
             },
             lambda *a, **kw: None,
-            TriggerInfo(domain="automation", name="test", home_assistant_start=False),  # type: ignore[typeddict-item]
+            trigger_info,
         )
 
 

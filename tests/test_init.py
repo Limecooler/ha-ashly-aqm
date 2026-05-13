@@ -115,16 +115,17 @@ async def test_multi_device_setup_and_unload(
         unique_id="00:14:aa:44:55:66",
         title="Kitchen",
     )
-    entry_a.add_to_hass(hass)
-    entry_b.add_to_hass(hass)
-
     # Patch AshlyClient to return the right mock based on host.
     def _client_factory(host, port, **_kw):
         return client_b if host == "192.168.1.101" else mock_client
 
     with patch("custom_components.ashly.AshlyClient", side_effect=_client_factory):
+        # Add+setup entry A first, then entry B — adding both before setup
+        # can race HA's startup hook that auto-loads pending entries.
+        entry_a.add_to_hass(hass)
         assert await hass.config_entries.async_setup(entry_a.entry_id)
         await hass.async_block_till_done()
+        entry_b.add_to_hass(hass)
         assert await hass.config_entries.async_setup(entry_b.entry_id)
         await hass.async_block_till_done()
 
