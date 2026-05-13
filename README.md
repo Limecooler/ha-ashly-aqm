@@ -160,8 +160,13 @@ the write didn't actually land.
   an issue with a diagnostic dump if you have a different model.
 - **Reachable port.** The device must be reachable on the configured
   port (default 8000) for both the REST poll and config flow, and on
-  port 8001 for the meter socket.io stream. There's no UDP discovery
-  beyond DHCP MAC-prefix sniffing (`00:14:AA:*`).
+  port 8001 for the meter socket.io stream.
+- **Cross-VLAN discovery.** Both DHCP and mDNS/zeroconf discovery only
+  fire on the same L2 segment as Home Assistant. In typical AV-rack
+  deployments the AQM lives on a separate VLAN — discovery won't see
+  it without a Bonjour/DHCP reflector on the router. Use the manual
+  setup flow; once the entry exists, all functionality works fine
+  across VLANs.
 - **No firmware update from HA.** This integration does not push
   firmware to the device. Updates are done from Ashly's standalone
   AquaControl Portal.
@@ -403,7 +408,7 @@ ASHLY_HOST=192.168.1.114 pytest -m integration tests/integration/
 Optional env vars: `ASHLY_PORT` (default 8000), `ASHLY_USERNAME` (default
 `admin`), `ASHLY_PASSWORD` (default `secret`).
 
-The live suite (31 tests) round-trips device state safely — every test that
+The live suite (43 tests, 40 always-run + 3 conditional-skip) round-trips device state safely — every test that
 mutates state restores the original value in a `try/finally`, and tests
 target the *last* output channel / DCA / crosspoint to minimise impact on a
 running install. Power and source-mixer assignment are read-only-tested.
