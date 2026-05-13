@@ -205,11 +205,15 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
             and data.get(CONF_PASSWORD, DEFAULT_PASSWORD) == DEFAULT_PASSWORD
         )
         if is_default:
+            # Fixable via the repair flow in repairs.py — user clicks the
+            # repair issue's "Fix" button and gets a one-step form to
+            # enter new credentials, which we write into the entry and
+            # reload. The issue auto-clears on the next successful poll.
             ir.async_create_issue(
                 self.hass,
                 DOMAIN,
                 issue_id,
-                is_fixable=False,
+                is_fixable=True,
                 severity=ir.IssueSeverity.WARNING,
                 translation_key="default_credentials",
                 translation_placeholders={"host": self.client.host},

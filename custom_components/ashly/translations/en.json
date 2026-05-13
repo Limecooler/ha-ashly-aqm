@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to Ashly Device",
-        "description": "Enter the connection details for your Ashly audio processor.",
+        "description": "Enter the connection details for your Ashly AQM-series audio processor. Home Assistant will probe the device and confirm the connection before creating the entry.",
         "data": {
           "host": "Host",
           "port": "Port",
@@ -11,23 +11,29 @@
           "password": "Password"
         },
         "data_description": {
-          "host": "IP address or hostname of the device",
-          "port": "API port (default 8000)",
-          "username": "Device username (default: admin)",
-          "password": "Device password (default: secret)"
+          "host": "IP address or hostname of the device. Look on the device's front panel under Network, or in your router's DHCP table. Do not enter a URL — just the host (e.g. `192.168.1.50`).",
+          "port": "Only change if your network admin has remapped the AquaControl API to a non-standard port.",
+          "username": "Default `admin` on a new device. Change this in AquaControl Portal first if your device has been hardened.",
+          "password": "Required. The factory default is `secret`. **Change the password in AquaControl Portal before going to production** — anyone on the LAN can otherwise control your audio system."
         }
       },
       "discovery_confirm": {
         "title": "Ashly Device Discovered",
-        "description": "An Ashly {model} was found at {host}. Enter credentials to complete setup.",
+        "description": "An Ashly {model} was found at {host} (port {port}). Enter credentials to complete setup. You can also override the port here if your AquaControl deployment uses a non-standard one.",
         "data": {
+          "port": "Port",
           "username": "Username",
           "password": "Password"
+        },
+        "data_description": {
+          "port": "Default 8000 — only change if AquaControl was remapped.",
+          "username": "Default `admin` on a factory device.",
+          "password": "Required. Don't reuse the factory password (`secret`)."
         }
       },
       "reauth_confirm": {
         "title": "Re-authenticate",
-        "description": "Authentication failed for {name}. Please enter updated credentials.",
+        "description": "Authentication failed for {name} at {host}:{port}. The device may have had its password changed, or the credentials in Home Assistant have drifted. Enter the current credentials below.",
         "data": {
           "username": "Username",
           "password": "Password"
@@ -35,7 +41,7 @@
       },
       "reconfigure": {
         "title": "Reconfigure Ashly Device",
-        "description": "Update connection settings for your Ashly device.",
+        "description": "Current connection: {current_host}:{current_port}. Update any field and Home Assistant will reconnect when you submit. Most commonly: the device's IP changed via DHCP, or you changed the password on the device.",
         "data": {
           "host": "Host",
           "port": "Port",
@@ -43,25 +49,25 @@
           "password": "Password"
         },
         "data_description": {
-          "host": "IP address or hostname of the device",
-          "port": "API port (default 8000)",
-          "username": "Device username (default: admin)",
-          "password": "Device password (default: secret)"
+          "host": "IP address or hostname of the device.",
+          "port": "AquaControl API port (default 8000).",
+          "username": "Device username (default `admin`).",
+          "password": "Device password — required."
         }
       }
     },
     "error": {
-      "cannot_connect": "Could not connect to the device. Verify the IP address and that the device is powered on.",
-      "invalid_auth": "Authentication failed. Check your username and password (defaults: admin / secret).",
-      "no_mac": "Could not retrieve a MAC address from the device — required to register it uniquely.",
-      "unknown": "An unexpected error occurred."
+      "cannot_connect": "Could not reach the device at {host}:{port}. Check that the device is powered on, that you entered only the IP or hostname (not a full URL), and that port {port} is reachable from Home Assistant. The AquaControl API is on port 8000 by default — not the device's web UI port.",
+      "invalid_auth": "Authentication failed. Verify the username and password against the AquaControl Portal login. Factory defaults are `admin` / `secret`; the device may have been hardened in production.",
+      "unknown": "An unexpected error occurred. Check the Home Assistant logs for details."
     },
     "abort": {
-      "already_configured": "This device is already configured.",
+      "already_configured": "This Ashly device is already configured. To add a different Ashly device, ensure each device has a unique MAC address on the network.",
       "reauth_successful": "Re-authentication was successful.",
       "reconfigure_successful": "Reconfiguration was successful.",
-      "unique_id_mismatch": "The device at this address is different from the one originally configured.",
-      "not_ashly_device": "The discovered device is not an Ashly audio processor."
+      "unique_id_mismatch": "The device at this address is different from the one originally configured (its MAC has changed). Remove the existing entry and add the new device fresh.",
+      "not_ashly_device": "The discovered device is not an Ashly audio processor.",
+      "no_mac": "The device responded but didn't include a MAC address. This typically means the device is running firmware older than 1.1.0, or the AquaControl API is in maintenance mode. Update the device's firmware via AquaControl Portal and try again."
     }
   },
   "options": {
@@ -72,7 +78,7 @@
           "poll_interval": "Polling interval (seconds)"
         },
         "data_description": {
-          "poll_interval": "How often to poll the device for state changes (5-300 seconds)"
+          "poll_interval": "How often Home Assistant polls the device for state. **30 s is recommended** for most setups. Lower values feel snappier in dashboards but put more load on the device's small CPU. Live meter readings update at 1 Hz via a separate websocket regardless of this setting."
         }
       }
     }
@@ -143,6 +149,22 @@
   "issues": {
     "default_credentials": {
       "title": "Ashly device is using factory-default credentials",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Update Ashly device credentials",
+            "description": "The Ashly device at {host} is using the factory password `secret`. This is a security risk on a networked audio device — anyone on the LAN can change presets, mute zones, or alter mixer routing.\n\nTo fix:\n1. Change the password on the device using the AquaControl Portal web UI.\n2. Enter the new credentials below; Home Assistant will reconnect with the updated password.",
+            "data": {
+              "username": "Username",
+              "password": "New password"
+            },
+            "data_description": {
+              "username": "Usually still `admin` unless you also changed the username on the device.",
+              "password": "The new password you just set on the device."
+            }
+          }
+        }
+      },
       "description": "The Ashly device at {host} is still using the factory-default username and password (admin / secret). This is a security concern on a networked audio device — anyone on the LAN can change presets, mute zones, or alter mixer routing. To resolve: change the password in the device's AquaControl Portal, then update Home Assistant via **Settings → Devices & services → Ashly Audio → Configure**."
     },
     "device_unreachable": {

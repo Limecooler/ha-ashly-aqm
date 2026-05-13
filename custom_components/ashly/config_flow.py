@@ -30,17 +30,21 @@ if TYPE_CHECKING:
     # mypy only sees the new HA 2026.2+ location; the runtime fallback below
     # is invisible to typing.
     from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
+    from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 else:
     try:
         from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
     except ImportError:  # pragma: no cover  # HA < 2026.2 fallback; CI is on 2026.5+
         from homeassistant.components.dhcp import DhcpServiceInfo
+    try:
+        from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
+    except ImportError:  # pragma: no cover  # HA < 2026.2 fallback
+        from homeassistant.components.zeroconf import ZeroconfServiceInfo
 
 from .client import AshlyAuthError, AshlyClient, AshlyConnectionError, SystemInfo
 from .const import (
     ASHLY_MAC_PREFIX,
     CONF_PORT,
-    DEFAULT_PASSWORD,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_USERNAME,
@@ -55,10 +59,14 @@ USER_SCHEMA = vol.Schema(
         vol.Optional(CONF_PORT, default=DEFAULT_PORT): NumberSelector(
             NumberSelectorConfig(min=1, max=65535, mode=NumberSelectorMode.BOX)
         ),
+        # Username defaults to "admin" (the factory username on every AQM device).
+        # Password is intentionally NOT defaulted: prefilling the factory password
+        # would one-click users into the state our `default_credentials` repair
+        # issue then scolds them for.
         vol.Optional(CONF_USERNAME, default=DEFAULT_USERNAME): TextSelector(
             TextSelectorConfig(type=TextSelectorType.TEXT)
         ),
-        vol.Optional(CONF_PASSWORD, default=DEFAULT_PASSWORD): TextSelector(
+        vol.Required(CONF_PASSWORD): TextSelector(
             TextSelectorConfig(type=TextSelectorType.PASSWORD)
         ),
     }
@@ -68,17 +76,6 @@ REAUTH_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USERNAME): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
         vol.Required(CONF_PASSWORD): TextSelector(
-            TextSelectorConfig(type=TextSelectorType.PASSWORD)
-        ),
-    }
-)
-
-DISCOVERY_SCHEMA = vol.Schema(
-    {
-        vol.Optional(CONF_USERNAME, default=DEFAULT_USERNAME): TextSelector(
-            TextSelectorConfig(type=TextSelectorType.TEXT)
-        ),
-        vol.Optional(CONF_PASSWORD, default=DEFAULT_PASSWORD): TextSelector(
             TextSelectorConfig(type=TextSelectorType.PASSWORD)
         ),
     }
@@ -130,14 +127,18 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
+        last_host: str | None = None
+        last_port: int = DEFAULT_PORT
         if user_input is not None:
+            last_host = user_input.get(CONF_HOST)
+            last_port = int(user_input.get(CONF_PORT, DEFAULT_PORT))
             try:
                 info = await _validate_connection(
                     self.hass,
                     host=user_input[CONF_HOST],
-                    port=int(user_input.get(CONF_PORT, DEFAULT_PORT)),
+                    port=last_port,
                     username=user_input.get(CONF_USERNAME, DEFAULT_USERNAME),
-                    password=user_input.get(CONF_PASSWORD, DEFAULT_PASSWORD),
+                    password=user_input[CONF_PASSWORD],
                 )
             except AshlyConnectionError:
                 errors["base"] = "cannot_connect"
@@ -148,14 +149,20 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
             else:
                 if not info.mac_address:
-                    errors["base"] = "no_mac"
-                else:
-                    mac = format_mac(info.mac_address)
-                    await self.async_set_unique_id(mac)
-                    self._abort_if_unique_id_configured()
-                    return self.async_create_entry(title=_entry_title(info), data=user_input)
+                    # `no_mac` is permanent for this device until firmware is
+                    # updated; abort rather than re-show the same form.
+                    return self.async_abort(reason="no_mac")
+                mac = format_mac(info.mac_address)
+                await self.async_set_unique_id(mac)
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(title=_entry_title(info), data=user_input)
 
-        return self.async_show_form(step_id="user", data_schema=USER_SCHEMA, errors=errors)
+        return self.async_show_form(
+            step_id="user",
+            data_schema=USER_SCHEMA,
+            errors=errors,
+            description_placeholders={"host": last_host or "", "port": str(last_port)},
+        )
 
     # ── DHCP discovery ──────────────────────────────────────────────
 
@@ -182,19 +189,90 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
         self.context["title_placeholders"] = {"name": f"Ashly {self._discovered_model or 'Audio'}"}
         return await self.async_step_discovery_confirm()
 
+    # ── Zeroconf / mDNS discovery ───────────────────────────────────
+
+    async def async_step_zeroconf(self, discovery_info: ZeroconfServiceInfo) -> ConfigFlowResult:
+        """Handle mDNS-advertised AQM devices.
+
+        Static-IP commercial AV installs rarely emit a DHCP lease packet HA
+        can see, so DHCP discovery often misses them. The AquaControl Portal
+        advertises itself via mDNS as `_http._tcp.local.` with a hostname
+        like `aqm1208_0014AA112233.local.`. Match by hostname prefix (the
+        manifest also filters on `aqm*` / `ashly*` so we only get called
+        for likely-Ashly devices).
+
+        MAC may be in the properties dict; if absent, fall back to probing
+        the device for its system info.
+        """
+        host = discovery_info.host
+        hostname = (discovery_info.hostname or "").lower()
+        # The manifest already prefilters by hostname prefix, but defence in
+        # depth — refuse anything that doesn't look like an AQM device.
+        if not hostname.startswith(("aqm", "ashly")):
+            return self.async_abort(reason="not_ashly_device")
+
+        # Extract MAC from the hostname suffix (`aqm1208_0014AA112233.local.`).
+        mac: str | None = None
+        bare = hostname.removesuffix(".local.").removesuffix(".local")
+        if "_" in bare:
+            tail = bare.rsplit("_", 1)[-1]
+            if len(tail) == 12 and all(c in "0123456789abcdef" for c in tail):
+                try:
+                    mac = format_mac(tail)
+                except (AttributeError, TypeError, ValueError):
+                    mac = None
+
+        # If hostname didn't carry the MAC, probe properties.
+        if mac is None:
+            mac_prop = discovery_info.properties.get("macaddress") or discovery_info.properties.get(
+                "mac"
+            )
+            if isinstance(mac_prop, str):
+                try:
+                    mac = format_mac(mac_prop)
+                except (AttributeError, TypeError, ValueError):
+                    mac = None
+
+        if mac is None:
+            # No MAC available; skip the OUI prefix check but defer unique-id
+            # assignment until discovery_confirm probes the device.
+            self._discovered_host = host
+            self._discovered_port = DEFAULT_PORT
+            if "_" in bare:
+                self._discovered_model = bare.split("_")[0].upper()
+            self.context["title_placeholders"] = {
+                "name": f"Ashly {self._discovered_model or 'Audio'}"
+            }
+            return await self.async_step_discovery_confirm()
+
+        if not mac.replace(":", "").upper().startswith(ASHLY_MAC_PREFIX):
+            return self.async_abort(reason="not_ashly_device")
+
+        self._discovered_host = host
+        self._discovered_mac = mac
+        if "_" in bare:
+            self._discovered_model = bare.split("_")[0].upper()
+        await self.async_set_unique_id(mac)
+        self._abort_if_unique_id_configured(updates={CONF_HOST: host})
+        self.context["title_placeholders"] = {"name": f"Ashly {self._discovered_model or 'Audio'}"}
+        return await self.async_step_discovery_confirm()
+
     async def async_step_discovery_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
             assert self._discovered_host is not None
+            # Allow the user to override the port from the confirm dialog
+            # for deployments where AquaControl is on a remapped port.
+            self._discovered_port = int(user_input.get(CONF_PORT, self._discovered_port))
             try:
                 info = await _validate_connection(
                     self.hass,
                     host=self._discovered_host,
                     port=self._discovered_port,
                     username=user_input.get(CONF_USERNAME, DEFAULT_USERNAME),
-                    password=user_input.get(CONF_PASSWORD, DEFAULT_PASSWORD),
+                    password=user_input[CONF_PASSWORD],
                 )
             except AshlyConnectionError:
                 errors["base"] = "cannot_connect"
@@ -217,16 +295,33 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_HOST: self._discovered_host,
                         CONF_PORT: self._discovered_port,
                         CONF_USERNAME: user_input.get(CONF_USERNAME, DEFAULT_USERNAME),
-                        CONF_PASSWORD: user_input.get(CONF_PASSWORD, DEFAULT_PASSWORD),
+                        CONF_PASSWORD: user_input[CONF_PASSWORD],
                     },
                 )
 
+        # The discovery form gets the port field as well so the user can
+        # override 8000 for a remapped deployment without falling back to
+        # the manual step.
+        discovery_schema_with_port = vol.Schema(
+            {
+                vol.Optional(CONF_PORT, default=self._discovered_port): NumberSelector(
+                    NumberSelectorConfig(min=1, max=65535, mode=NumberSelectorMode.BOX)
+                ),
+                vol.Optional(CONF_USERNAME, default=DEFAULT_USERNAME): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.TEXT)
+                ),
+                vol.Required(CONF_PASSWORD): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                ),
+            }
+        )
         return self.async_show_form(
             step_id="discovery_confirm",
-            data_schema=DISCOVERY_SCHEMA,
+            data_schema=discovery_schema_with_port,
             description_placeholders={
                 "model": self._discovered_model or "Audio Processor",
                 "host": self._discovered_host or "",
+                "port": str(self._discovered_port),
             },
             errors=errors,
         )
@@ -234,6 +329,10 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
     # ── Re-authentication ───────────────────────────────────────────
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
+        # Stash the host for use in the confirm dialog's description so the
+        # user knows *which* device is asking for credentials (matters when
+        # multiple AQMs are configured).
+        self._reauth_host: str = entry_data.get(CONF_HOST, "")
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
@@ -241,13 +340,15 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         reauth_entry = self._get_reauth_entry()
+        host = reauth_entry.data[CONF_HOST]
+        port = int(reauth_entry.data.get(CONF_PORT, DEFAULT_PORT))
 
         if user_input is not None:
             try:
                 info = await _validate_connection(
                     self.hass,
-                    host=reauth_entry.data[CONF_HOST],
-                    port=int(reauth_entry.data.get(CONF_PORT, DEFAULT_PORT)),
+                    host=host,
+                    port=port,
                     username=user_input[CONF_USERNAME],
                     password=user_input[CONF_PASSWORD],
                 )
@@ -284,7 +385,11 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="reauth_confirm",
             data_schema=prefilled,
-            description_placeholders={"name": reauth_entry.title},
+            description_placeholders={
+                "name": reauth_entry.title,
+                "host": host,
+                "port": str(port),
+            },
             errors=errors,
         )
 
@@ -295,15 +400,19 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         reconfigure_entry = self._get_reconfigure_entry()
+        current_host = reconfigure_entry.data.get(CONF_HOST, "")
+        current_port = int(reconfigure_entry.data.get(CONF_PORT, DEFAULT_PORT))
 
         if user_input is not None:
+            current_host = user_input.get(CONF_HOST, current_host)
+            current_port = int(user_input.get(CONF_PORT, current_port))
             try:
                 info = await _validate_connection(
                     self.hass,
                     host=user_input[CONF_HOST],
-                    port=int(user_input.get(CONF_PORT, DEFAULT_PORT)),
+                    port=current_port,
                     username=user_input.get(CONF_USERNAME, DEFAULT_USERNAME),
-                    password=user_input.get(CONF_PASSWORD, DEFAULT_PASSWORD),
+                    password=user_input[CONF_PASSWORD],
                 )
             except AshlyConnectionError:
                 errors["base"] = "cannot_connect"
@@ -314,23 +423,34 @@ class AshlyConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
             else:
                 if not info.mac_address:
-                    errors["base"] = "no_mac"
-                else:
-                    mac = format_mac(info.mac_address)
-                    await self.async_set_unique_id(mac)
-                    self._abort_if_unique_id_mismatch()
-                    return self.async_update_reload_and_abort(
-                        reconfigure_entry, data_updates=user_input
-                    )
+                    # As with the user step, no_mac is a hardware/firmware-level
+                    # condition the user can't fix in this dialog; abort.
+                    return self.async_abort(reason="no_mac")
+                mac = format_mac(info.mac_address)
+                await self.async_set_unique_id(mac)
+                self._abort_if_unique_id_mismatch()
+                return self.async_update_reload_and_abort(
+                    reconfigure_entry, data_updates=user_input
+                )
 
         suggested = {
             CONF_HOST: reconfigure_entry.data.get(CONF_HOST, ""),
             CONF_PORT: reconfigure_entry.data.get(CONF_PORT, DEFAULT_PORT),
             CONF_USERNAME: reconfigure_entry.data.get(CONF_USERNAME, DEFAULT_USERNAME),
-            CONF_PASSWORD: reconfigure_entry.data.get(CONF_PASSWORD, DEFAULT_PASSWORD),
         }
         schema = self.add_suggested_values_to_schema(USER_SCHEMA, suggested)
-        return self.async_show_form(step_id="reconfigure", data_schema=schema, errors=errors)
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={
+                "name": reconfigure_entry.title,
+                "current_host": current_host or "",
+                "current_port": str(current_port),
+                "host": current_host or "",
+                "port": str(current_port),
+            },
+        )
 
     # ── Options ─────────────────────────────────────────────────────
 
@@ -347,10 +467,12 @@ class AshlyOptionsFlow(OptionsFlow):
             return self.async_create_entry(data=user_input)
 
         current_interval = self.config_entry.options.get("poll_interval", DEFAULT_SCAN_INTERVAL)
+        # Floor raised from 5 to 10 seconds: a busy embedded device handles a
+        # 9-endpoint gather every 5s poorly; 10s+ is conflict-free in practice.
         schema = vol.Schema(
             {
                 vol.Optional("poll_interval", default=current_interval): NumberSelector(
-                    NumberSelectorConfig(min=5, max=300, step=5, mode=NumberSelectorMode.SLIDER)
+                    NumberSelectorConfig(min=10, max=300, step=5, mode=NumberSelectorMode.SLIDER)
                 ),
             }
         )

@@ -90,6 +90,7 @@ async def test_user_flow_errors(hass: HomeAssistant, exc, error) -> None:
 
 
 async def test_user_flow_no_mac_aborts(hass: HomeAssistant) -> None:
+    """A device without a MAC aborts the flow (the user can't fix this in-form)."""
     no_mac = SystemInfo(
         model="AQM1208",
         name="",
@@ -106,8 +107,8 @@ async def test_user_flow_no_mac_aborts(hass: HomeAssistant) -> None:
         return_value=no_mac,
     ):
         result = await hass.config_entries.flow.async_configure(result["flow_id"], USER_INPUT)
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": "no_mac"}
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_mac"
 
 
 # ── DHCP discovery ──────────────────────────────────────────────────────
@@ -392,8 +393,131 @@ async def test_reconfigure_errors(hass: HomeAssistant, mock_config_entry, exc, e
     assert result["errors"] == {"base": error}
 
 
-async def test_reconfigure_no_mac_error(hass: HomeAssistant, mock_config_entry) -> None:
-    """If the device returns no MAC during reconfigure, the form shows no_mac."""
+# ── Zeroconf discovery ─────────────────────────────────────────────────
+
+
+def _zeroconf_info(hostname: str = "aqm1208_0014aa112233.local.", host: str = "192.168.1.114"):
+    try:
+        from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
+    except ImportError:
+        from homeassistant.components.zeroconf import ZeroconfServiceInfo
+    return ZeroconfServiceInfo(
+        ip_address=host,  # type: ignore[arg-type]
+        ip_addresses=[host],  # type: ignore[list-item]
+        port=80,
+        hostname=hostname,
+        type="_http._tcp.local.",
+        name=hostname,
+        properties={},
+    )
+
+
+async def test_zeroconf_extracts_mac_from_hostname(hass: HomeAssistant) -> None:
+    """Hostname `aqm1208_0014aa112233.local.` → MAC `00:14:aa:11:22:33`."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_ZEROCONF}, data=_zeroconf_info()
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "discovery_confirm"
+
+
+async def test_zeroconf_non_ashly_hostname_aborts(hass: HomeAssistant) -> None:
+    """A hostname that doesn't start with aqm/ashly aborts (defence in depth)."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_ZEROCONF},
+        data=_zeroconf_info(hostname="not_ours.local."),
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "not_ashly_device"
+
+
+async def test_zeroconf_wrong_oui_aborts(hass: HomeAssistant) -> None:
+    """Hostname carries a MAC with non-Ashly OUI prefix — abort."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_ZEROCONF},
+        data=_zeroconf_info(hostname="aqm_aabbccddeeff.local."),
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "not_ashly_device"
+
+
+async def test_zeroconf_proceeds_without_mac(hass: HomeAssistant) -> None:
+    """Hostname has no MAC suffix; defer unique_id assignment to confirm step."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_ZEROCONF},
+        data=_zeroconf_info(hostname="aqm.local."),
+    )
+    # No MAC available → no _abort_if_unique_id_configured; we land in confirm.
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "discovery_confirm"
+
+
+async def test_zeroconf_uses_properties_mac(hass: HomeAssistant) -> None:
+    """If hostname lacks MAC but properties contain it, that's used."""
+    try:
+        from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
+    except ImportError:
+        from homeassistant.components.zeroconf import ZeroconfServiceInfo
+    info = ZeroconfServiceInfo(
+        ip_address="192.168.1.50",  # type: ignore[arg-type]
+        ip_addresses=["192.168.1.50"],  # type: ignore[list-item]
+        port=80,
+        hostname="aqm.local.",
+        type="_http._tcp.local.",
+        name="aqm.local.",
+        properties={"macaddress": "0014aa334455"},
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_ZEROCONF}, data=info
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "discovery_confirm"
+
+
+async def test_zeroconf_invalid_hostname_mac_falls_through(hass: HomeAssistant) -> None:
+    """A 12-char tail that isn't actually hex falls through to property lookup,
+    then to the no-MAC branch."""
+    info = _zeroconf_info(hostname="aqm_gggggggggggg.local.")
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_ZEROCONF}, data=info
+    )
+    # No MAC → proceeds to confirm.
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "discovery_confirm"
+
+
+async def test_discovery_confirm_accepts_port_override(hass: HomeAssistant) -> None:
+    """User can change the port in the discovery confirm dialog."""
+    try:
+        from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
+    except ImportError:
+        from homeassistant.components.dhcp import DhcpServiceInfo
+    info = DhcpServiceInfo(
+        ip="192.168.1.114",
+        hostname="aqm1208",
+        macaddress="0014aa112233",
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_DHCP}, data=info
+    )
+    with patch(
+        "custom_components.ashly.config_flow._validate_connection",
+        return_value=VALID_INFO,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_PORT: 9000, CONF_USERNAME: "admin", CONF_PASSWORD: "newpass"},
+        )
+        await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_PORT] == 9000
+
+
+async def test_reconfigure_no_mac_aborts(hass: HomeAssistant, mock_config_entry) -> None:
+    """If the device returns no MAC during reconfigure, the flow aborts."""
     mock_config_entry.add_to_hass(hass)
     result = await mock_config_entry.start_reconfigure_flow(hass)
     no_mac = SystemInfo(
@@ -412,5 +536,5 @@ async def test_reconfigure_no_mac_error(hass: HomeAssistant, mock_config_entry) 
             result["flow_id"],
             USER_INPUT,
         )
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": "no_mac"}
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_mac"

@@ -51,10 +51,15 @@ strict = true
 module = "socketio.*"
 ignore_missing_imports = true
 
-# The DHCP service_info module only exists in HA 2026.2+; the try/except fallback
-# in config_flow.py handles both. Locally we may be on an older HA stub set.
+# The DHCP / zeroconf service_info modules only exist in HA 2026.2+; the
+# try/except fallback in config_flow.py handles both. Locally we may be on
+# an older HA stub set.
 [[tool.mypy.overrides]]
 module = "homeassistant.helpers.service_info.dhcp"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "homeassistant.helpers.service_info.zeroconf"
 ignore_missing_imports = true
 
 # Tests use pytest/pytest-asyncio fixtures that don't survive strict mode.
