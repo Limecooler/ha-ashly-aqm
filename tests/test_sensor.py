@@ -161,6 +161,165 @@ async def test_meter_sensor_on_update_short_records_returns(mock_coordinator, mo
     assert s.native_value == -60.0
 
 
+# ── RestoreEntity behavior ─────────────────────────────────────────────
+
+
+async def test_firmware_sensor_restores_value_on_added_to_hass(mock_coordinator):
+    """Without coordinator system_info yet, the sensor reports the restored state."""
+    from homeassistant.core import State
+
+    s = AshlyFirmwareSensor(mock_coordinator)
+    mock_coordinator.system_info = None
+    last_state = State("sensor.firmware", "1.0.5")
+    with (
+        patch(
+            "homeassistant.helpers.restore_state.RestoreEntity.async_get_last_state",
+            new=AsyncMock(return_value=last_state),
+        ),
+        patch(
+            "homeassistant.helpers.update_coordinator.CoordinatorEntity.async_added_to_hass",
+            new=AsyncMock(),
+        ),
+    ):
+        await s.async_added_to_hass()
+    assert s.native_value == "1.0.5"
+
+
+async def test_firmware_sensor_ignores_unknown_restore(mock_coordinator):
+    """A restored value of 'unknown'/'unavailable' is treated as no restore."""
+    from homeassistant.core import State
+
+    s = AshlyFirmwareSensor(mock_coordinator)
+    mock_coordinator.system_info = None
+    last_state = State("sensor.firmware", "unknown")
+    with (
+        patch(
+            "homeassistant.helpers.restore_state.RestoreEntity.async_get_last_state",
+            new=AsyncMock(return_value=last_state),
+        ),
+        patch(
+            "homeassistant.helpers.update_coordinator.CoordinatorEntity.async_added_to_hass",
+            new=AsyncMock(),
+        ),
+    ):
+        await s.async_added_to_hass()
+    assert s.native_value is None
+
+
+async def test_firmware_sensor_no_restore_when_no_last_state(mock_coordinator):
+    """If there's no last state, _restored stays None."""
+    s = AshlyFirmwareSensor(mock_coordinator)
+    mock_coordinator.system_info = None
+    with (
+        patch(
+            "homeassistant.helpers.restore_state.RestoreEntity.async_get_last_state",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "homeassistant.helpers.update_coordinator.CoordinatorEntity.async_added_to_hass",
+            new=AsyncMock(),
+        ),
+    ):
+        await s.async_added_to_hass()
+    assert s.native_value is None
+
+
+async def test_preset_count_sensor_restores_integer(mock_coordinator):
+    from homeassistant.core import State
+
+    s = AshlyPresetCountSensor(mock_coordinator)
+    mock_coordinator.data = None
+    with (
+        patch(
+            "homeassistant.helpers.restore_state.RestoreEntity.async_get_last_state",
+            new=AsyncMock(return_value=State("sensor.preset_count", "7")),
+        ),
+        patch(
+            "homeassistant.helpers.update_coordinator.CoordinatorEntity.async_added_to_hass",
+            new=AsyncMock(),
+        ),
+    ):
+        await s.async_added_to_hass()
+    assert s.native_value == 7
+
+
+async def test_preset_count_sensor_handles_non_int_restore(mock_coordinator):
+    """A garbage restored value falls back to None rather than crashing."""
+    from homeassistant.core import State
+
+    s = AshlyPresetCountSensor(mock_coordinator)
+    mock_coordinator.data = None
+    with (
+        patch(
+            "homeassistant.helpers.restore_state.RestoreEntity.async_get_last_state",
+            new=AsyncMock(return_value=State("sensor.preset_count", "not-a-number")),
+        ),
+        patch(
+            "homeassistant.helpers.update_coordinator.CoordinatorEntity.async_added_to_hass",
+            new=AsyncMock(),
+        ),
+    ):
+        await s.async_added_to_hass()
+    assert s.native_value is None
+
+
+async def test_preset_count_sensor_skips_unknown_restore(mock_coordinator):
+    from homeassistant.core import State
+
+    s = AshlyPresetCountSensor(mock_coordinator)
+    mock_coordinator.data = None
+    with (
+        patch(
+            "homeassistant.helpers.restore_state.RestoreEntity.async_get_last_state",
+            new=AsyncMock(return_value=State("sensor.preset_count", "unavailable")),
+        ),
+        patch(
+            "homeassistant.helpers.update_coordinator.CoordinatorEntity.async_added_to_hass",
+            new=AsyncMock(),
+        ),
+    ):
+        await s.async_added_to_hass()
+    assert s.native_value is None
+
+
+async def test_last_recalled_sensor_restores_value(mock_coordinator):
+    from homeassistant.core import State
+
+    s = AshlyLastRecalledPresetSensor(mock_coordinator)
+    mock_coordinator.data = None
+    with (
+        patch(
+            "homeassistant.helpers.restore_state.RestoreEntity.async_get_last_state",
+            new=AsyncMock(return_value=State("sensor.last_recalled", "Evening Mode")),
+        ),
+        patch(
+            "homeassistant.helpers.update_coordinator.CoordinatorEntity.async_added_to_hass",
+            new=AsyncMock(),
+        ),
+    ):
+        await s.async_added_to_hass()
+    assert s.native_value == "Evening Mode"
+
+
+async def test_last_recalled_sensor_skips_unavailable_restore(mock_coordinator):
+    from homeassistant.core import State
+
+    s = AshlyLastRecalledPresetSensor(mock_coordinator)
+    mock_coordinator.data = None
+    with (
+        patch(
+            "homeassistant.helpers.restore_state.RestoreEntity.async_get_last_state",
+            new=AsyncMock(return_value=State("sensor.last_recalled", "unavailable")),
+        ),
+        patch(
+            "homeassistant.helpers.update_coordinator.CoordinatorEntity.async_added_to_hass",
+            new=AsyncMock(),
+        ),
+    ):
+        await s.async_added_to_hass()
+    assert s.native_value is None
+
+
 async def test_meter_sensor_async_added_to_hass_seeds_from_buffer(
     mock_coordinator,
 ):

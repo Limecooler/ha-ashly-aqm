@@ -70,6 +70,59 @@ async def test_unload_entry(hass: HomeAssistant, mock_config_entry, _patch_clien
     assert mock_config_entry.state is ConfigEntryState.NOT_LOADED
 
 
+async def test_multi_device_setup_and_unload(
+    hass: HomeAssistant, mock_client, patched_session
+) -> None:
+    """Two Ashly entries can coexist; services register once and only deregister
+    on the last unload."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.ashly.const import DOMAIN
+    from custom_components.ashly.services import SERVICE_RECALL_PRESET
+
+    entry_a = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "host": "192.168.1.100",
+            "port": 8000,
+            "username": "admin",
+            "password": "secret",
+        },
+        unique_id="00:14:aa:11:22:33",
+        title="Living Room",
+    )
+    entry_b = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "host": "192.168.1.101",
+            "port": 8000,
+            "username": "admin",
+            "password": "secret",
+        },
+        unique_id="00:14:aa:44:55:66",
+        title="Kitchen",
+    )
+    entry_a.add_to_hass(hass)
+    entry_b.add_to_hass(hass)
+    with patch("custom_components.ashly.AshlyClient", return_value=mock_client):
+        assert await hass.config_entries.async_setup(entry_a.entry_id)
+        assert await hass.config_entries.async_setup(entry_b.entry_id)
+        await hass.async_block_till_done()
+
+    # Both entries loaded; service registered once.
+    assert entry_a.state is ConfigEntryState.LOADED
+    assert entry_b.state is ConfigEntryState.LOADED
+    assert hass.services.has_service(DOMAIN, SERVICE_RECALL_PRESET)
+
+    # Unload one — service stays.
+    assert await hass.config_entries.async_unload(entry_a.entry_id)
+    assert hass.services.has_service(DOMAIN, SERVICE_RECALL_PRESET)
+
+    # Unload the second — service goes away.
+    assert await hass.config_entries.async_unload(entry_b.entry_id)
+    assert not hass.services.has_service(DOMAIN, SERVICE_RECALL_PRESET)
+
+
 async def test_homeassistant_stop_stops_meter(
     hass: HomeAssistant, mock_config_entry, _patch_client, patched_session
 ) -> None:

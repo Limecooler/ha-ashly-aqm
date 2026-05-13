@@ -57,6 +57,11 @@
         "default": "mdi:source-branch"
       }
     },
+    "button": {
+      "recall_preset": {
+        "default": "mdi:playlist-play"
+      }
+    },
     "sensor": {
       "firmware_version": {
         "default": "mdi:chip"

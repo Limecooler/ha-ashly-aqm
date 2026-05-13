@@ -12,6 +12,7 @@ from homeassistant.components.sensor import (
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import METER_INPUT_RANGE_DB, NUM_INPUTS
 from .coordinator import AshlyConfigEntry, AshlyCoordinator
@@ -47,8 +48,15 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class AshlyFirmwareSensor(AshlyEntity, SensorEntity):
-    """Reports the device's firmware (software) revision."""
+class AshlyFirmwareSensor(AshlyEntity, RestoreEntity, SensorEntity):
+    """Reports the device's firmware (software) revision.
+
+    Restores the prior firmware string across HA restarts so the entity
+    isn't 'unavailable' for ~30 s after restart while the coordinator
+    completes its first poll.
+    """
+
+    _restored: str | None = None
 
     def __init__(self, coordinator: AshlyCoordinator) -> None:
         super().__init__(
@@ -61,18 +69,29 @@ class AshlyFirmwareSensor(AshlyEntity, SensorEntity):
             ),
         )
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is not None and last.state not in ("unknown", "unavailable"):
+            self._restored = last.state
+
     @property
     def native_value(self) -> str | None:
         info = self.coordinator.system_info
-        return info.firmware_version if info else None
+        if info is not None:
+            return info.firmware_version
+        return self._restored
 
 
-class AshlyPresetCountSensor(AshlyEntity, SensorEntity):
+class AshlyPresetCountSensor(AshlyEntity, RestoreEntity, SensorEntity):
     """Number of stored presets on the device.
 
     Useful as an automation trigger (e.g. notify when presets change).
-    The full preset list is exposed as an attribute.
+    The full preset list is exposed as an attribute. Restores its last
+    value across HA restarts.
     """
+
+    _restored: int | None = None
 
     def __init__(self, coordinator: AshlyCoordinator) -> None:
         super().__init__(
@@ -85,10 +104,21 @@ class AshlyPresetCountSensor(AshlyEntity, SensorEntity):
             ),
         )
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is not None and last.state not in ("unknown", "unavailable"):
+            try:
+                self._restored = int(last.state)
+            except (TypeError, ValueError):
+                self._restored = None
+
     @property
     def native_value(self) -> int | None:
         data = self.coordinator.data
-        return len(data.presets) if data is not None else None
+        if data is not None:
+            return len(data.presets)
+        return self._restored
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -98,12 +128,14 @@ class AshlyPresetCountSensor(AshlyEntity, SensorEntity):
         return {"presets": [{"id": p.id, "name": p.name} for p in data.presets]}
 
 
-class AshlyLastRecalledPresetSensor(AshlyEntity, SensorEntity):
+class AshlyLastRecalledPresetSensor(AshlyEntity, RestoreEntity, SensorEntity):
     """Name of the most-recently-recalled preset (or `None`).
 
     `modified` (True if working state has drifted since the recall) is
-    exposed as an attribute.
+    exposed as an attribute. Restores its last value across HA restarts.
     """
+
+    _restored: str | None = None
 
     def __init__(self, coordinator: AshlyCoordinator) -> None:
         super().__init__(
@@ -115,12 +147,18 @@ class AshlyLastRecalledPresetSensor(AshlyEntity, SensorEntity):
             ),
         )
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is not None and last.state not in ("unknown", "unavailable"):
+            self._restored = last.state
+
     @property
     def native_value(self) -> str | None:
         data = self.coordinator.data
-        if data is None:
-            return None
-        return data.last_recalled_preset.name
+        if data is not None:
+            return data.last_recalled_preset.name
+        return self._restored
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

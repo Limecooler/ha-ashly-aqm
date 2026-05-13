@@ -117,6 +117,11 @@
         "name": "Output {output_number} mixer"
       }
     },
+    "button": {
+      "recall_preset": {
+        "name": "Recall {preset}"
+      }
+    },
     "sensor": {
       "firmware_version": {
         "name": "Firmware version"
