@@ -10,9 +10,10 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -32,7 +33,14 @@ from .client import (
     PresetInfo,
     SystemInfo,
 )
-from .const import DEFAULT_PASSWORD, DEFAULT_SCAN_INTERVAL, DEFAULT_USERNAME, DOMAIN
+from .const import (
+    DEFAULT_PASSWORD,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_USERNAME,
+    DOMAIN,
+    NUM_INPUTS,
+    NUM_MIXERS,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -53,6 +61,12 @@ _REFRESH_DEBOUNCE_SECONDS = 0.3
 # user-facing repair, short enough that a real outage (or DHCP-induced
 # IP change) shows up before the day's automations break.
 _UNREACHABLE_REPAIR_THRESHOLD = 20
+
+# Window over which we coalesce optimistic crosspoint patches into a single
+# coordinator update. Single user actions are imperceptibly delayed (~50 ms);
+# scenes or automations that flip multiple crosspoints close together
+# collapse into one state-update fan-out (~280 entities x N changes -> x1).
+_CROSSPOINT_PATCH_DEBOUNCE_S = 0.05
 
 
 @dataclass(slots=True)
@@ -145,6 +159,10 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
         # Tracks consecutive update failures for the unreachable repair issue.
         self._consecutive_failures: int = 0
         self._unreachable_issue_raised: bool = False
+        # Pending optimistic patches for the crosspoint matrix; coalesced via
+        # a short-window timer (see `queue_crosspoint_patch`).
+        self._crosspoint_pending: dict[tuple[int, int], CrosspointState] = {}
+        self._crosspoint_flush_handle: asyncio.TimerHandle | None = None
 
     async def _async_setup(self) -> None:
         """Fetch one-time data: system info + channel topology."""
@@ -261,16 +279,61 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
         self._evaluate_repair_issues()
         return data
 
+    def _crosspoints_needed(self) -> bool:
+        """True if any crosspoint entity is enabled in the registry.
+
+        Crosspoints are 96 per AQM1208 and read every poll. They're
+        disabled-by-default, so most installations don't need them. Skipping
+        the HTTP call when none are enabled removes 1 of 9 endpoints from
+        each poll and saves ~30 KB of JSON parsing per poll for a typical
+        device. The check runs each poll, so flipping an entity on
+        triggers the next poll to start fetching.
+        """
+        ent_reg = er.async_get(self.hass)
+        for entry in er.async_entries_for_config_entry(ent_reg, self.config_entry.entry_id):
+            if entry.disabled_by is not None:
+                continue
+            if entry.domain not in (Platform.NUMBER, Platform.SWITCH):
+                continue
+            if entry.unique_id.endswith(("_level", "_mute")) and (
+                "xp_level" in entry.unique_id or "xp_mute" in entry.unique_id
+            ):
+                return True
+            # Fallback by entity key (the suffix after the device MAC)
+            if "xp_level_m" in entry.unique_id or "xp_mute_m" in entry.unique_id:
+                return True
+        return False
+
+    def _default_crosspoints(self) -> dict[tuple[int, int], CrosspointState]:
+        """Fallback crosspoint matrix used when the poll is skipped on the very
+        first refresh (no prior data to reuse).
+        """
+        return {
+            (m, i): CrosspointState(mixer_index=m, input_index=i, level_db=0.0, muted=True)
+            for m in range(1, NUM_MIXERS + 1)
+            for i in range(1, NUM_INPUTS + 1)
+        }
+
     async def _do_update(self) -> AshlyDeviceData:
         """The actual update logic; wrapped by `_async_update_data` for tracking."""
         if self.system_info is None:
             raise UpdateFailed("System info not available; setup did not run")
 
+        prev = self.data
+
+        async def _crosspoints_or_reuse() -> dict[tuple[int, int], CrosspointState]:
+            """Skip the (expensive) 96-entry crosspoint fetch when no
+            entity that depends on it is enabled. Reuses the prior poll's
+            value (or default-fills on the first poll)."""
+            if self._crosspoints_needed():
+                return await self.client.async_get_crosspoints()
+            return prev.crosspoints if prev else self._default_crosspoints()
+
         results = await asyncio.gather(
             self.client.async_get_front_panel(),
             self.client.async_get_chain_state(),
             self.client.async_get_dvca_state(),
-            self.client.async_get_crosspoints(),
+            _crosspoints_or_reuse(),
             self.client.async_get_presets(),
             self.client.async_get_phantom_power(),
             self.client.async_get_mic_preamp(),
@@ -298,8 +361,6 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
                         _TASK_LABELS[idx],
                     )
                     raise ConfigEntryAuthFailed from r
-
-        prev = self.data
 
         # Critical endpoints: front_panel, chains, dvca, crosspoints.
         # A *full* connection error or API error on any of these tanks the
@@ -401,3 +462,44 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
         if self.data is None:
             return
         self.async_set_updated_data(dataclasses.replace(self.data, **fields))
+
+    @callback
+    def queue_crosspoint_patch(
+        self,
+        key: tuple[int, int],
+        *,
+        level_db: float | None = None,
+        muted: bool | None = None,
+    ) -> None:
+        """Queue an optimistic crosspoint patch; coalesce into one update.
+
+        Multiple crosspoint changes within `_CROSSPOINT_PATCH_DEBOUNCE_S`
+        produce a single `async_set_updated_data` call (instead of N), so
+        scenes that flip many crosspoints don't fan out ~280 entity state
+        reads x N times.
+        """
+        if self.data is None:
+            return
+        base = self._crosspoint_pending.get(key) or self.data.crosspoints.get(key)
+        if base is None:
+            return
+        self._crosspoint_pending[key] = dataclasses.replace(
+            base,
+            level_db=base.level_db if level_db is None else level_db,
+            muted=base.muted if muted is None else muted,
+        )
+        if self._crosspoint_flush_handle is None:
+            self._crosspoint_flush_handle = self.hass.loop.call_later(
+                _CROSSPOINT_PATCH_DEBOUNCE_S,
+                self._flush_crosspoint_patches,
+            )
+
+    @callback
+    def _flush_crosspoint_patches(self) -> None:
+        """Apply all queued crosspoint patches in a single state update."""
+        self._crosspoint_flush_handle = None
+        if self.data is None or not self._crosspoint_pending:
+            return
+        crosspoints = {**self.data.crosspoints, **self._crosspoint_pending}
+        self._crosspoint_pending.clear()
+        self.async_set_updated_data(dataclasses.replace(self.data, crosspoints=crosspoints))

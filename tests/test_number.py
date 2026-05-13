@@ -59,8 +59,8 @@ async def test_crosspoint_level_set(mock_coordinator):
     n = AshlyCrosspointLevelNumber(mock_coordinator, 4, 6)
     await n.async_set_native_value(-12.0)
     mock_coordinator.client.async_set_crosspoint_level.assert_awaited_once_with(4, 6, -12.0)
-    pushed = mock_coordinator.async_set_updated_data.call_args[0][0]
-    assert pushed.crosspoints[(4, 6)].level_db == -12.0
+    # Crosspoint optimistic update goes through the coordinator's debouncer.
+    mock_coordinator.queue_crosspoint_patch.assert_called_once_with((4, 6), level_db=-12.0)
 
 
 async def test_crosspoint_level_disabled_by_default(mock_coordinator):
@@ -176,16 +176,12 @@ async def test_dvca_native_value_no_data(mock_coordinator):
     assert n.native_value is None
 
 
-async def test_crosspoint_push_optimistic_no_data_noop(mock_coordinator):
+async def test_crosspoint_level_push_optimistic_defers_to_queue(mock_coordinator):
+    """Entity hands off to the coordinator's queue; no-data / missing-key
+    guards moved onto the coordinator (see test_coordinator)."""
     n = AshlyCrosspointLevelNumber(mock_coordinator, 1, 1)
-    mock_coordinator.data = None
     n._push_optimistic(-3.0)
-    mock_coordinator.async_set_updated_data.assert_not_called()
-
-
-async def test_crosspoint_push_optimistic_missing_key_noop(mock_coordinator):
-    n = AshlyCrosspointLevelNumber(mock_coordinator, 99, 99)
-    n._push_optimistic(-3.0)
+    mock_coordinator.queue_crosspoint_patch.assert_called_once_with((1, 1), level_db=-3.0)
     mock_coordinator.async_set_updated_data.assert_not_called()
 
 

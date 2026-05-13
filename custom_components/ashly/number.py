@@ -190,15 +190,9 @@ class AshlyCrosspointLevelNumber(AshlyEntity, NumberEntity):
 
     @callback
     def _push_optimistic(self, level_db: float) -> None:
-        data = self.coordinator.data
-        if data is None:
-            return
-        crosspoints = dict(data.crosspoints)
-        existing = crosspoints.get(self._key)
-        if existing is None:
-            return
-        crosspoints[self._key] = dataclasses.replace(existing, level_db=level_db)
-        self.coordinator.async_set_updated_data(dataclasses.replace(data, crosspoints=crosspoints))
+        # Route through the coordinator's debouncer so N crosspoint changes
+        # within a 50 ms window collapse into one entity-state fan-out.
+        self.coordinator.queue_crosspoint_patch(self._key, level_db=level_db)
 
 
 # ── Mic preamp gain (per mic input) ────────────────────────────────────

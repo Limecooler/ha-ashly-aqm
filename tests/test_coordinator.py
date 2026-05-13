@@ -304,6 +304,186 @@ async def test_device_unreachable_issue_raised_after_threshold(coordinator, mock
     assert issue_reg.async_get_issue(DOMAIN, issue_id) is None
 
 
+# ── crosspoint skip-when-disabled ──────────────────────────────────────
+
+
+async def test_crosspoints_polled_when_an_entity_is_enabled(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """When at least one crosspoint entity is enabled, the poll fetches them."""
+    from homeassistant.helpers import entity_registry as er
+
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry)
+    await coord._async_setup()
+    # Add an enabled crosspoint entity to the registry.
+    ent_reg = er.async_get(hass)
+    ent_reg.async_get_or_create(
+        domain="switch",
+        platform="ashly",
+        unique_id="aa-bb-cc-dd-ee-ff_xp_mute_m1_i1",
+        config_entry=mock_config_entry,
+    )
+    mock_client.async_get_crosspoints.reset_mock()
+    await coord._async_update_data()
+    mock_client.async_get_crosspoints.assert_awaited()
+
+
+async def test_crosspoints_skipped_when_no_entities_enabled(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """With no enabled crosspoint entity, the (expensive 96-entry) fetch is skipped."""
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry)
+    await coord._async_setup()
+    mock_client.async_get_crosspoints.reset_mock()
+    await coord._async_update_data()
+    mock_client.async_get_crosspoints.assert_not_awaited()
+
+
+async def test_crosspoints_skipped_first_poll_uses_default_matrix(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """On the very first poll with no prior data and no enabled crosspoint
+    entities, the skip path returns a default-filled matrix (all muted)."""
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry)
+    await coord._async_setup()
+    data = await coord._async_update_data()
+    # All 96 default crosspoints, muted=True.
+    assert len(data.crosspoints) == 8 * 12
+    assert all(cp.muted for cp in data.crosspoints.values())
+
+
+async def test_crosspoints_skipped_when_only_disabled_entity_present(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """A registered-but-disabled crosspoint entity does NOT force the fetch."""
+    from homeassistant.helpers import entity_registry as er
+
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry)
+    await coord._async_setup()
+    ent_reg = er.async_get(hass)
+    ent_reg.async_get_or_create(
+        domain="switch",
+        platform="ashly",
+        unique_id="aa-bb-cc-dd-ee-ff_xp_mute_m2_i2",
+        config_entry=mock_config_entry,
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+    # Add a non-crosspoint enabled entity to confirm the per-entity loop
+    # doesn't false-positive on non-crosspoint keys.
+    ent_reg.async_get_or_create(
+        domain="switch",
+        platform="ashly",
+        unique_id="aa-bb-cc-dd-ee-ff_power",
+        config_entry=mock_config_entry,
+    )
+    # And an enabled entity from another domain to exercise the domain filter.
+    ent_reg.async_get_or_create(
+        domain="sensor",
+        platform="ashly",
+        unique_id="aa-bb-cc-dd-ee-ff_firmware_version",
+        config_entry=mock_config_entry,
+    )
+    mock_client.async_get_crosspoints.reset_mock()
+    await coord._async_update_data()
+    mock_client.async_get_crosspoints.assert_not_awaited()
+
+
+# ── queue_crosspoint_patch behavior ────────────────────────────────────
+
+
+async def test_queue_crosspoint_patch_batches_within_window(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """Multiple queued patches within the debounce window collapse into one update."""
+    import dataclasses as _dc
+
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry)
+    await coord._async_setup()
+    coord.data = await coord._async_update_data()
+
+    updates: list = []
+    coord.async_set_updated_data = lambda d: updates.append(_dc.replace(d))
+
+    # Queue three patches quickly.
+    coord.queue_crosspoint_patch((1, 1), muted=False)
+    coord.queue_crosspoint_patch((1, 2), level_db=-3.0)
+    coord.queue_crosspoint_patch((1, 1), level_db=-6.0)  # second patch to same key
+    # Nothing fired yet.
+    assert updates == []
+    # Wait for the flush.
+    import asyncio
+
+    await asyncio.sleep(0.1)
+    # One coalesced update.
+    assert len(updates) == 1
+    pushed = updates[0]
+    assert pushed.crosspoints[(1, 1)].muted is False
+    assert pushed.crosspoints[(1, 1)].level_db == -6.0
+    assert pushed.crosspoints[(1, 2)].level_db == -3.0
+
+
+async def test_queue_crosspoint_patch_noop_when_no_data(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry)
+    # data is None — no _async_update_data has run.
+    coord.queue_crosspoint_patch((1, 1), muted=False)
+    assert coord._crosspoint_pending == {}
+    assert coord._crosspoint_flush_handle is None
+
+
+async def test_queue_crosspoint_patch_noop_when_key_missing(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """A patch for a key that doesn't exist in the current matrix is ignored."""
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry)
+    await coord._async_setup()
+    coord.data = await coord._async_update_data()
+    # Mutate prev to drop the (99, 99) entry — same effect as a sparse matrix.
+    import dataclasses as _dc
+
+    cps = dict(coord.data.crosspoints)
+    coord.data = _dc.replace(coord.data, crosspoints=cps)
+    coord.queue_crosspoint_patch((99, 99), muted=False)
+    assert (99, 99) not in coord._crosspoint_pending
+
+
+async def test_flush_crosspoint_patches_noop_when_empty(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """Flushing with nothing pending is a no-op even if data is set."""
+    import dataclasses as _dc
+
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry)
+    await coord._async_setup()
+    coord.data = await coord._async_update_data()
+    called: list = []
+    coord.async_set_updated_data = lambda d: called.append(_dc.replace(d))
+    coord._flush_crosspoint_patches()
+    assert called == []
+
+
+async def test_flush_crosspoint_patches_noop_when_data_none(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """If self.data became None between queue and flush, flush is a no-op."""
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry)
+    await coord._async_setup()
+    coord.data = await coord._async_update_data()
+    coord.queue_crosspoint_patch((1, 1), muted=False)
+    coord.data = None  # forcibly drop before the timer fires
+    coord._flush_crosspoint_patches()  # must not crash
+
+
 async def test_repair_default_credentials_revaluated_per_poll(
     hass: HomeAssistant, mock_client, mock_config_entry
 ):

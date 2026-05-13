@@ -122,8 +122,10 @@ async def test_crosspoint_mute_turn_off(mock_coordinator):
     sw = AshlyCrosspointMuteSwitch(mock_coordinator, 3, 7)
     await sw.async_turn_off()
     mock_coordinator.client.async_set_crosspoint_mute.assert_awaited_once_with(3, 7, False)
-    pushed = mock_coordinator.async_set_updated_data.call_args[0][0]
-    assert pushed.crosspoints[(3, 7)].muted is False
+    # Optimistic update routes through the coordinator's debouncer rather
+    # than firing async_set_updated_data directly (so bulk crosspoint
+    # changes coalesce).
+    mock_coordinator.queue_crosspoint_patch.assert_called_once_with((3, 7), muted=False)
 
 
 # ── platform setup ─────────────────────────────────────────────────────
@@ -347,16 +349,12 @@ async def test_dvca_push_optimistic_missing_index_is_noop(mock_coordinator):
     mock_coordinator.async_set_updated_data.assert_not_called()
 
 
-async def test_crosspoint_push_optimistic_no_data_is_noop(mock_coordinator):
+async def test_crosspoint_push_optimistic_defers_to_queue(mock_coordinator):
+    """The entity hands off to queue_crosspoint_patch unconditionally; the
+    'no data / missing key' guard lives on the coordinator instead."""
     sw = AshlyCrosspointMuteSwitch(mock_coordinator, 1, 1)
-    mock_coordinator.data = None
     sw._push_optimistic(True)
-    mock_coordinator.async_set_updated_data.assert_not_called()
-
-
-async def test_crosspoint_push_optimistic_missing_key_is_noop(mock_coordinator):
-    sw = AshlyCrosspointMuteSwitch(mock_coordinator, 99, 99)
-    sw._push_optimistic(True)
+    mock_coordinator.queue_crosspoint_patch.assert_called_once_with((1, 1), muted=True)
     mock_coordinator.async_set_updated_data.assert_not_called()
 
 
@@ -451,12 +449,11 @@ async def test_crosspoint_mute_unavailable_when_missing(mock_coordinator):
 
 
 async def test_crosspoint_mute_turn_on_happy_path(mock_coordinator):
-    """Crosspoint mute turn_on issues a client call and pushes optimistic update."""
+    """Crosspoint mute turn_on issues a client call and queues an optimistic patch."""
     sw = AshlyCrosspointMuteSwitch(mock_coordinator, 2, 4)
     await sw.async_turn_on()
     mock_coordinator.client.async_set_crosspoint_mute.assert_awaited_once_with(2, 4, True)
-    pushed = mock_coordinator.async_set_updated_data.call_args[0][0]
-    assert pushed.crosspoints[(2, 4)].muted is True
+    mock_coordinator.queue_crosspoint_patch.assert_called_once_with((2, 4), muted=True)
 
 
 async def test_front_panel_led_turn_on_happy_path(mock_coordinator):
