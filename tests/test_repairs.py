@@ -51,12 +51,27 @@ async def test_noop_repair_flow_immediately_creates_entry(hass: HomeAssistant):
 
 
 async def test_init_shows_menu(hass: HomeAssistant, loaded_entry) -> None:
-    """The init step presents the provision/manual menu."""
+    """The init step presents the provision/manual menu with all placeholders filled."""
     flow = DefaultCredentialsRepairFlow(hass, loaded_entry.entry_id)
     flow.hass = hass
     result = await flow.async_step_init()
     assert result["type"] is FlowResultType.MENU
     assert set(result["menu_options"]) == {"provision", "manual"}
+    # All placeholders referenced by strings.json must be present, otherwise
+    # HA's renderer raises KeyError → 500 "Config flow could not be loaded".
+    placeholders = result.get("description_placeholders") or {}
+    assert "name" in placeholders
+    assert "host" in placeholders
+    assert "service_user" in placeholders
+
+
+async def test_init_aborts_if_entry_gone(hass: HomeAssistant) -> None:
+    """If the entry vanished, init aborts cleanly (no orphan flows)."""
+    flow = DefaultCredentialsRepairFlow(hass, "nonexistent-entry-id")
+    flow.hass = hass
+    result = await flow.async_step_init()
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "entry_not_found"
 
 
 # ── Provision path ────────────────────────────────────────────────────

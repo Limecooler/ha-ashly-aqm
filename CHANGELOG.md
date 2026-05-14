@@ -4,6 +4,33 @@ All notable changes to this integration are documented here. Versioning loosely
 follows [Semantic Versioning](https://semver.org/) with the caveat that the
 `<major>.<minor>.<patch>` field also drives HA's HACS update notifications.
 
+## 0.7.1 — 2026-05-14
+
+**Hotfix** for a ship-blocker spotted by a user immediately after the 0.7.0
+update lands: clicking the `default_credentials` repair issue returned
+*"Config flow could not be loaded: 500 Internal Server Error"* instead of
+the new fix menu.
+
+The init step of `DefaultCredentialsRepairFlow` showed a menu without
+fetching the config entry first. The strings.json title for that step
+references `{name}`, but `description_placeholders` only carried
+`service_user` — so HA's template renderer raised `KeyError("name")`
+during the menu form-render, surfacing as a 500 to the frontend.
+
+Fix:
+
+- `async_step_init` now fetches the entry up-front and passes
+  `name`, `host`, and `service_user` in `description_placeholders` so
+  every template variable on the menu form resolves.
+- If the entry was removed between the issue surfacing and the user
+  clicking it, the init step now aborts with `entry_not_found` instead
+  of crashing.
+- New tests verify both the placeholder set is complete and the
+  abort-on-missing-entry path.
+
+If you saw the 500 on 0.7.0: update to 0.7.1 and click the repair issue
+again. No restart required.
+
 ## 0.7.0 — 2026-05-14
 
 Security + setup-UX overhaul driven by the WebSocket / REST API reverse

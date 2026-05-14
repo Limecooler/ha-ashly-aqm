@@ -78,10 +78,20 @@ class DefaultCredentialsRepairFlow(RepairsFlow):
         self._entry_id = entry_id
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        # Resolve the entry's name/host so the title/description placeholders
+        # render. A missing `{name}` placeholder raises KeyError during HA's
+        # form-render path and surfaces as "Config flow could not be loaded".
+        entry = self._hass.config_entries.async_get_entry(self._entry_id)
+        if entry is None:
+            return self.async_abort(reason="entry_not_found")
         return self.async_show_menu(
             step_id="init",
             menu_options=["provision", "manual"],
-            description_placeholders={"service_user": SERVICE_ACCOUNT_USERNAME},
+            description_placeholders={
+                "name": entry.title,
+                "host": entry.data.get("host", ""),
+                "service_user": SERVICE_ACCOUNT_USERNAME,
+            },
         )
 
     # ── Option 1: provision service account ─────────────────────────
