@@ -138,16 +138,22 @@ AquaControlError
 
 ## Authentication
 
-The device's Socket.IO server emits state-change events ONLY to clients
-that carry the `ashly-sid` cookie returned by
-`POST /v1.0-beta/session/login` in their WebSocket handshake.
-Unauthenticated clients receive only public broadcasts (Channel Meters,
-System Info Values, etc.) — every `Modify *`, `Set *`, `Change *`, and
-similar state event is silently dropped.
+`AquaControlClient` performs a REST login on connect, captures the
+`ashly-sid` cookie returned by `POST /v1.0-beta/session/login`, and
+includes it in the WebSocket handshake.
 
-`AquaControlClient` handles this automatically: it performs a REST login
-on connect, captures the cookie, and includes it in the WebSocket
-handshake.
+**Auth is recommended, not strictly required for state events on
+current firmware.** Empirically (AQM1208 firmware 1.1.8) the device
+delivers state-change events to unauthenticated subscribers too.
+Earlier reverse-engineering notes suggested auth was a hard gate; that
+was either wrong or was changed by a firmware update. The library still
+authenticates by default because:
+
+1. It's required for some endpoints the library may grow to use (mutations,
+   user CRUD).
+2. Future firmware may tighten the gate again.
+3. A logged-in client appears in the device's security audit log under
+   its real account, which is what production deployments want.
 
 **Recommendation:** create a dedicated service account on the device
 (role: `Guest Admin`, with only the permissions you actually need) and
@@ -222,7 +228,7 @@ so any new code path requires a test.
 
 ### Live-device test suite
 
-An additional 8 tests under `tests/test_live.py` connect to a real AQM
+An additional 21 tests under `tests/test_live.py` connect to a real AQM
 device and verify the wire contract. They're gated behind the `live`
 marker AND require `ASHLY_HOST` in the environment, so the default
 `pytest` run skips them entirely.
@@ -242,16 +248,46 @@ on hardware that has the LED control wired.
 
 What the live suite verifies:
 
+**Core connectivity (8 tests)**
+
 | Test | Verifies |
 |---|---|
 | `test_connect_succeeds` | REST login + WS upgrade work end-to-end |
-| `test_authenticated_topics_emit_events` | Triggering a REST mutation produces the corresponding push event — confirms cookie-gated state events are being received |
-| `test_ambient_events_arrive` | `System Info Values` heartbeats land within 3 s — confirms the WS pipe is open |
+| `test_authenticated_topics_emit_events` | A REST mutation produces the matching push event |
+| `test_ambient_events_arrive` | `System Info Values` heartbeats land within 3 s |
 | `test_echo_filter_skips_own_changes` | `set_session_id` + `is_from_session` filter own-echoes |
 | `test_on_topic_receives_only_matching_topic` | Topic-filtered listener fires only for that topic |
 | `test_unsubscribe_stops_dispatch` | `remove()` callback prevents further dispatch |
 | `test_fetch_session_cookies_against_live_device` | Auth helper obtains the `ashly-sid` cookie |
 | `test_fetch_session_cookies_wrong_password_raises` | Wrong password → `AquaControlAuthError` |
+
+**Per-topic round-trips (4 tests)**
+
+| Test | Verifies |
+|---|---|
+| `test_working_settings_chain_mute_round_trip` | `WorkingSettings / Set Chain Mute` arrives on REST chain-mute toggle |
+| `test_mic_preamp_round_trip` | `MicPreamp / Change Mic Preamp Gain` arrives on REST mic-gain change |
+| `test_phantom_power_round_trip` | `PhantomPower / Change Phantom Power` arrives on REST phantom toggle |
+| `test_gpo_round_trip` | `WorkingSettings / Modify generalPurposeOutputConfiguration` arrives on REST GPO toggle |
+
+**Protocol-level (4 tests)**
+
+| Test | Verifies |
+|---|---|
+| `test_preset_recall_three_phase_protocol` | `Preset Recall Begin → Recall → End` arrive in order with correct `uniqueId` shapes |
+| `test_channel_meters_stream_emits_at_high_rate` | Meter stream emits >2 Hz, `is_meter` classification correct |
+| `test_event_api_and_records_shape_on_crosspoint_mute` | Real `Modify DSP Mixer Parameter Value` event has expected `api`/`type`/`records` |
+| `test_unauthenticated_ws_still_connects` | Documents the current "auth is recommended, not strictly required" reality |
+
+**Dispatch + runtime API (5 tests)**
+
+| Test | Verifies |
+|---|---|
+| `test_on_event_dispatch_by_name` | `on_event(name, …)` fires only for that name |
+| `test_on_any_dispatch_sees_multiple_topics` | `on_any` receives events across topics |
+| `test_runtime_join_subscribes_after_connect` | `client.join(topic)` after connect starts delivering that topic |
+| `test_multi_listener_fan_out_in_documented_order` | `any → topic → event_name` dispatch order |
+| `test_clean_disconnect_stops_background_task` | `client.disconnect()` exits within 3 s |
 
 ## License
 
