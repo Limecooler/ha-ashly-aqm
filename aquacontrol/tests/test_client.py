@@ -290,3 +290,9 @@ def test_empty_topics_subscribes_to_nothing():
     """topics=[] means 'I only want explicit join() calls later'."""
     client = AquaControlClient(host="x", username="u", password="p", topics=[])
     assert client.topics == ()
+
+
+async def test_connected_false_without_stream():
+    """Before connect() is called, .connected reports False."""
+    client = AquaControlClient(host="x", username="u", password="p")
+    assert client.connected is False

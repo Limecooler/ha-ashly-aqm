@@ -21,3 +21,4 @@ venv/
 
 # Vendor PDFs (Ashly Audio copyrighted manuals — kept locally only)
 docs/*.pdf
+.coverage

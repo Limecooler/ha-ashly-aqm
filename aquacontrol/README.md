@@ -209,14 +209,49 @@ responsible for surfacing reauth UX (in the HA integration's case, via
 
 ```bash
 pip install -e .[dev]
-pytest
+pytest                    # 79 offline tests, enforced 100 % coverage
 ruff check src tests
 mypy src
 ```
 
-Tests run offline — the Socket.IO and REST surfaces are mocked. There's
-no live-device integration test in this library; the ha-ashly-aqm repo
-has those under `tests/integration/`.
+### Offline test suite
+
+79 tests, runs in ~100 ms with no network. The Socket.IO and REST
+surfaces are mocked. `pyproject.toml` enforces `--cov-fail-under=100`
+so any new code path requires a test.
+
+### Live-device test suite
+
+An additional 8 tests under `tests/test_live.py` connect to a real AQM
+device and verify the wire contract. They're gated behind the `live`
+marker AND require `ASHLY_HOST` in the environment, so the default
+`pytest` run skips them entirely.
+
+```bash
+ASHLY_HOST=192.168.1.100 \
+ASHLY_USERNAME=haassistant \
+ASHLY_PASSWORD=… \
+pytest -m live --no-cov
+```
+
+Optional env vars: `ASHLY_USERNAME` (default `admin`), `ASHLY_PASSWORD`
+(default `secret`), `ASHLY_PORT` (default `8000`). Tests restore any
+state they touch — they're safe to run against a production device,
+though the front-panel-LED toggle test does cause one brief LED flicker
+on hardware that has the LED control wired.
+
+What the live suite verifies:
+
+| Test | Verifies |
+|---|---|
+| `test_connect_succeeds` | REST login + WS upgrade work end-to-end |
+| `test_authenticated_topics_emit_events` | Triggering a REST mutation produces the corresponding push event — confirms cookie-gated state events are being received |
+| `test_ambient_events_arrive` | `System Info Values` heartbeats land within 3 s — confirms the WS pipe is open |
+| `test_echo_filter_skips_own_changes` | `set_session_id` + `is_from_session` filter own-echoes |
+| `test_on_topic_receives_only_matching_topic` | Topic-filtered listener fires only for that topic |
+| `test_unsubscribe_stops_dispatch` | `remove()` callback prevents further dispatch |
+| `test_fetch_session_cookies_against_live_device` | Auth helper obtains the `ashly-sid` cookie |
+| `test_fetch_session_cookies_wrong_password_raises` | Wrong password → `AquaControlAuthError` |
 
 ## License
 

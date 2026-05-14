@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from aquacontrol.stream import StreamConnection, _next_backoff
 
@@ -206,3 +209,313 @@ async def test_no_cookie_header_means_no_cookie_in_handshake():
     with patch("aquacontrol.stream.socketio.AsyncClient", _make_fake_sio(captured)):
         await conn._connect_once()
     assert captured["headers"] == {}
+
+
+# ── reconnect loop ──────────────────────────────────────────────────────
+
+
+async def test_run_loop_retries_after_connect_failure():
+    """A failing _connect_once is caught, backoff advances, then retried."""
+    on_event = AsyncMock()
+    conn = StreamConnection(
+        host="x", port=8001, topics=[], cookie_header=None, on_event=on_event
+    )
+    call_count = {"n": 0}
+
+    async def fake_connect_once():
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("simulated drop")
+        # Second iteration: signal the loop to exit cleanly.
+        conn._stopping = True
+
+    # Skip real backoff sleeps so the test doesn't take 1+ seconds.
+    async def fake_sleep(_):
+        return
+
+    with (
+        patch.object(conn, "_connect_once", new=fake_connect_once),
+        patch("aquacontrol.stream.asyncio.sleep", new=fake_sleep),
+    ):
+        await conn._run()
+    # Loop fired connect_once at least twice (failure + clean exit).
+    assert call_count["n"] >= 2
+
+
+async def test_run_loop_resets_backoff_on_long_connection():
+    """If _connect_once returns AFTER the dwell threshold, backoff resets to 1s.
+
+    Captures the value of `_backoff` *before* the post-sleep `_next_backoff`
+    bump (since that bump would push it back up to ~2s, masking the reset).
+    """
+    on_event = AsyncMock()
+    conn = StreamConnection(
+        host="x", port=8001, topics=[], cookie_header=None, on_event=on_event
+    )
+    conn._backoff = 16.0  # something high
+
+    fake_time = {"now": 0.0}
+
+    class FakeLoop:
+        def time(self):
+            return fake_time["now"]
+
+    backoff_observed: list[float] = []
+
+    async def fake_connect_once():
+        fake_time["now"] += 60.0  # simulate long-lived connection
+
+    async def fake_sleep(s):
+        # Sleep is called with `_backoff` AFTER any reset but BEFORE
+        # `_next_backoff` bumps it. Capture and exit the loop.
+        backoff_observed.append(conn._backoff)
+        conn._stopping = True
+
+    with (
+        patch.object(conn, "_connect_once", new=fake_connect_once),
+        patch("aquacontrol.stream.asyncio.get_running_loop", return_value=FakeLoop()),
+        patch("aquacontrol.stream.asyncio.sleep", new=fake_sleep),
+    ):
+        await conn._run()
+
+    assert backoff_observed == [1.0]  # reset took effect
+
+
+async def test_run_loop_exits_on_cancellation():
+    """asyncio.CancelledError propagates out of _run cleanly."""
+    on_event = AsyncMock()
+    conn = StreamConnection(
+        host="x", port=8001, topics=[], cookie_header=None, on_event=on_event
+    )
+
+    async def fake_connect_once():
+        raise asyncio.CancelledError
+
+    with (
+        patch.object(conn, "_connect_once", new=fake_connect_once),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await conn._run()
+
+
+async def test_connect_once_propagates_socketio_connection_error():
+    """A socketio.exceptions.ConnectionError → AquaControlConnectionError."""
+    import socketio as sio_mod
+
+    from aquacontrol.exceptions import AquaControlConnectionError
+
+    on_event = AsyncMock()
+    conn = StreamConnection(
+        host="x", port=8001, topics=[], cookie_header=None, on_event=on_event
+    )
+
+    class FailingSio:
+        connected = False
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def connect(self, *args, **kwargs):
+            raise sio_mod.exceptions.ConnectionError("refused")
+
+        async def wait(self):
+            return
+
+        async def disconnect(self):
+            pass
+
+        def on(self, name, handler):
+            pass
+
+        _trigger_event = AsyncMock()
+
+    with (
+        patch("aquacontrol.stream.socketio.AsyncClient", FailingSio),
+        pytest.raises(AquaControlConnectionError),
+    ):
+        await conn._connect_once()
+
+
+async def test_on_connect_callback_invoked_then_topics_joined():
+    """When the underlying socket fires 'connect', user callback runs AND topics are rejoined."""
+    on_event = AsyncMock()
+    on_connect_called = []
+    captured_emits: list[tuple[str, str]] = []
+
+    async def user_on_connect():
+        on_connect_called.append(True)
+
+    conn = StreamConnection(
+        host="x",
+        port=8001,
+        topics=["System", "WorkingSettings"],
+        cookie_header=None,
+        on_event=on_event,
+        on_connect=user_on_connect,
+    )
+
+    # Build a FakeSio that captures the registered handlers and emit calls.
+    handlers: dict[str, object] = {}
+    captured: dict[str, object] = {}
+
+    class FakeSio:
+        connected = True
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def connect(self, url, *, transports, headers):
+            captured["headers"] = headers
+
+        async def wait(self):
+            return
+
+        async def disconnect(self):
+            pass
+
+        async def emit(self, name, data=None):
+            captured_emits.append((name, data))
+
+        def on(self, name, handler):
+            handlers[name] = handler
+
+        _trigger_event = AsyncMock()
+
+    with patch("aquacontrol.stream.socketio.AsyncClient", FakeSio):
+        await conn._connect_once()
+        # Now fire the registered connect handler.
+        await handlers["connect"]()
+
+    assert on_connect_called == [True]
+    assert ("join", "System") in captured_emits
+    assert ("join", "WorkingSettings") in captured_emits
+
+
+async def test_on_disconnect_callback_invoked():
+    on_event = AsyncMock()
+    on_disconnect_called = []
+
+    async def user_on_disconnect():
+        on_disconnect_called.append(True)
+
+    conn = StreamConnection(
+        host="x",
+        port=8001,
+        topics=[],
+        cookie_header=None,
+        on_event=on_event,
+        on_disconnect=user_on_disconnect,
+    )
+
+    handlers: dict[str, object] = {}
+
+    class FakeSio:
+        connected = True
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def connect(self, *args, **kwargs):
+            pass
+
+        async def wait(self):
+            return
+
+        async def disconnect(self):
+            pass
+
+        async def emit(self, *_args, **_kwargs):
+            pass
+
+        def on(self, name, handler):
+            handlers[name] = handler
+
+        _trigger_event = AsyncMock()
+
+    with patch("aquacontrol.stream.socketio.AsyncClient", FakeSio):
+        await conn._connect_once()
+        await handlers["disconnect"]()
+
+    assert on_disconnect_called == [True]
+
+
+async def test_emit_passes_through_when_connected():
+    """emit() forwards to the underlying socket when connected."""
+    on_event = AsyncMock()
+    conn = StreamConnection(
+        host="x", port=8001, topics=[], cookie_header=None, on_event=on_event
+    )
+    # Inject a fake sio that's marked connected.
+    fake_sio = MagicMock()
+    fake_sio.connected = True
+    fake_sio.emit = AsyncMock()
+    conn._sio = fake_sio
+    await conn.emit("join", "MyTopic")
+    fake_sio.emit.assert_awaited_once_with("join", "MyTopic")
+
+
+async def test_connected_property_false_when_no_sio():
+    on_event = AsyncMock()
+    conn = StreamConnection(
+        host="x", port=8001, topics=[], cookie_header=None, on_event=on_event
+    )
+    assert conn.connected is False
+
+
+async def test_stop_suppresses_disconnect_exception():
+    """Even if sio.disconnect() raises, stop() completes cleanly."""
+    on_event = AsyncMock()
+    conn = StreamConnection(
+        host="x", port=8001, topics=[], cookie_header=None, on_event=on_event
+    )
+    fake_sio = MagicMock()
+    fake_sio.disconnect = AsyncMock(side_effect=RuntimeError("can't disconnect"))
+    conn._sio = fake_sio
+    await conn.stop()  # must not raise
+    fake_sio.disconnect.assert_awaited_once()
+
+
+async def test_topic_join_failure_logged_not_propagated(caplog):
+    """A failing emit('join', X) during the connect handler must be logged but
+    must not prevent other joins or kill the connection."""
+    on_event = AsyncMock()
+    conn = StreamConnection(
+        host="x",
+        port=8001,
+        topics=["A", "B"],
+        cookie_header=None,
+        on_event=on_event,
+    )
+
+    handlers: dict[str, object] = {}
+    captured_sio: list[object] = []
+
+    class FakeSio:
+        connected = True
+
+        def __init__(self, *args, **kwargs):
+            self.emit = AsyncMock(side_effect=[RuntimeError("A failed"), None])
+            captured_sio.append(self)
+
+        async def connect(self, *args, **kwargs):
+            pass
+
+        async def wait(self):
+            return
+
+        async def disconnect(self):
+            pass
+
+        def on(self, name, handler):
+            handlers[name] = handler
+
+        _trigger_event = AsyncMock()
+
+    with patch("aquacontrol.stream.socketio.AsyncClient", FakeSio):
+        await conn._connect_once()
+        with caplog.at_level(logging.ERROR):
+            await handlers["connect"]()
+
+    # Loop didn't stop on A's failure — B still attempted.
+    sio = captured_sio[0]
+    assert sio.emit.await_count == 2  # both A and B were tried

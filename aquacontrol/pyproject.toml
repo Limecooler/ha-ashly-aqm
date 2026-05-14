@@ -55,7 +55,10 @@ asyncio_mode = "auto"
 # applied to this stand-alone library it fails teardown when aiohttp
 # spawns its safe-shutdown thread. The plugin is HA-specific and we don't
 # need any of its fixtures here, so disable it for this package.
-addopts = "-p no:homeassistant"
+addopts = "-p no:homeassistant --cov=aquacontrol --cov-fail-under=100 --cov-report=term-missing -m 'not live'"
+markers = [
+  "live: tests that need ASHLY_HOST set and hit a real device — opt in with `-m live`",
+]
 
 [tool.ruff]
 target-version = "py312"

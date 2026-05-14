@@ -70,3 +70,109 @@ def test_cookie_header_renders_correctly():
 
 def test_cookie_header_handles_empty_dict():
     assert cookie_header({}) == ""
+
+
+async def test_fetch_session_cookies_uses_supplied_session():
+    """A supplied session is reused (not opened/closed by us)."""
+    import aiohttp
+
+    s = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True))
+    try:
+        with aioresponses() as m:
+            m.post(
+                LOGIN_URL,
+                status=200,
+                payload={"success": True},
+                headers={"Set-Cookie": "ashly-sid=xyz; Path=/"},
+            )
+            cookies = await fetch_session_cookies(
+                "192.168.1.100",
+                username="admin",
+                password="secret",
+                session=s,
+            )
+            assert cookies.get("ashly-sid") == "xyz"
+        # The session is still open — we didn't close it.
+        assert not s.closed
+    finally:
+        await s.close()
+
+
+async def test_fetch_session_cookies_supports_timeout():
+    """asyncio.TimeoutError surfaces as AquaControlTimeoutError."""
+
+    from aquacontrol.exceptions import AquaControlTimeoutError
+
+    with aioresponses() as m:
+        m.post(LOGIN_URL, exception=TimeoutError())
+        with pytest.raises(AquaControlTimeoutError):
+            await fetch_session_cookies(
+                "192.168.1.100", username="admin", password="secret"
+            )
+
+
+async def test_fetch_session_cookies_merges_jar_with_response_cookies():
+    """A cookie present only in the jar (not on the response) is still returned."""
+    from unittest.mock import patch
+
+    import aiohttp
+
+    from aquacontrol import auth as auth_mod
+
+    s = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True))
+    try:
+        with (
+            aioresponses() as m,
+            patch.object(
+                auth_mod,
+                "_cookies_from_jar",
+                return_value={"jar-only": "value", "ashly-sid": "should-not-override"},
+            ),
+        ):
+            m.post(
+                LOGIN_URL,
+                status=200,
+                payload={"success": True},
+                headers={"Set-Cookie": "ashly-sid=from-response; Path=/"},
+            )
+            cookies = await fetch_session_cookies(
+                "192.168.1.100",
+                username="admin",
+                password="secret",
+                session=s,
+            )
+            assert cookies.get("ashly-sid") == "from-response"
+            assert cookies.get("jar-only") == "value"
+    finally:
+        await s.close()
+
+
+async def test_fetch_session_cookies_handles_unreadable_body():
+    """If we hit a 5xx with a body that fails to decode, the protocol-error
+    message uses a placeholder instead of raising on the read."""
+    from unittest.mock import patch
+
+    from aquacontrol.exceptions import AquaControlProtocolError
+
+    with (
+        aioresponses() as m,
+        patch("aquacontrol.auth._read_body_safely", return_value="<body unreadable>"),
+    ):
+        m.post(LOGIN_URL, status=503, body="unused")
+        with pytest.raises(AquaControlProtocolError, match="unreadable"):
+            await fetch_session_cookies(
+                "192.168.1.100", username="admin", password="secret"
+            )
+
+
+async def test_read_body_safely_returns_placeholder_on_clienterror():
+    """_read_body_safely covers the inner exception branch directly."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    import aiohttp
+
+    from aquacontrol.auth import _read_body_safely
+
+    resp = MagicMock()
+    resp.text = AsyncMock(side_effect=aiohttp.ClientError("decode failure"))
+    assert await _read_body_safely(resp) == "<body unreadable>"
