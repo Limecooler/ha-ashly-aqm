@@ -71,7 +71,7 @@ async def test_diagnostics_includes_coordinator_health(hass: HomeAssistant, load
     assert coord["last_update_success"] is True
     assert coord["consecutive_failures"] == 0
     assert coord["unreachable_issue_raised"] is False
-    assert coord["update_interval_s"] == 30
+    assert coord["update_interval_s"] == 10
     assert coord["crosspoint_patches_pending"] == 0
 
 

@@ -1238,3 +1238,121 @@ def patch_object_request(client, replacement):
             client._session.request = original
 
     return _swap()
+
+
+# ── User management (service account provisioning) ─────────────────────
+
+
+async def test_async_list_users(client):
+    with aioresponses() as m:
+        m.get(
+            f"{BASE}/security/users",
+            status=200,
+            payload=envelope([{"username": "admin"}, {"username": "haassistant"}]),
+        )
+        names = await client.async_list_users()
+        assert names == ["admin", "haassistant"]
+
+
+async def test_async_list_users_skips_malformed(client):
+    """Entries without a username string are dropped, not raised."""
+    with aioresponses() as m:
+        m.get(
+            f"{BASE}/security/users",
+            status=200,
+            payload=envelope([{"username": "admin"}, "not-a-dict", {}]),
+        )
+        names = await client.async_list_users()
+        assert names == ["admin"]
+
+
+async def test_async_list_users_non_list_raises(client):
+    with aioresponses() as m:
+        m.get(
+            f"{BASE}/security/users",
+            status=200,
+            payload=envelope({"username": "admin"}),
+        )
+        with pytest.raises(AshlyApiError):
+            await client.async_list_users()
+
+
+async def test_async_create_user_sends_full_body(client):
+    """Permissions/remotePermissions are sent as arrays of strings."""
+    with aioresponses() as m:
+        m.post(f"{BASE}/security/users", status=200, payload=envelope({}))
+        await client.async_create_user(
+            username="haassistant",
+            password="hexpassword42",
+            role_type_id="Guest Admin",
+            permissions=["Edit Signal Chain", "Preset Recall"],
+        )
+        # aioresponses keys requests by (method, url); grab the body via .requests
+        sent = next(iter(m.requests.values()))[0].kwargs["json"]
+        assert sent["username"] == "haassistant"
+        assert sent["roleTypeId"] == "Guest Admin"
+        assert sent["password"] == "hexpassword42"
+        assert sent["permissions"] == ["Edit Signal Chain", "Preset Recall"]
+        assert sent["remotePermissions"] == []
+
+
+async def test_async_delete_user_success(client):
+    with aioresponses() as m:
+        m.delete(f"{BASE}/security/users/haassistant", status=200, payload=envelope({}))
+        assert await client.async_delete_user("haassistant") is True
+
+
+async def test_async_delete_user_returns_false_on_404(client):
+    """Deleting an absent user should be treated as a no-op."""
+    with aioresponses() as m:
+        m.delete(
+            f"{BASE}/security/users/ghost",
+            status=404,
+            body='{"statusCode":404,"error":"Not Found","message":"Not Found"}',
+        )
+        assert await client.async_delete_user("ghost") is False
+
+
+async def test_async_delete_user_propagates_other_errors(client):
+    with aioresponses() as m:
+        m.delete(
+            f"{BASE}/security/users/haassistant",
+            status=500,
+            body="boom",
+        )
+        with pytest.raises(AshlyApiError):
+            await client.async_delete_user("haassistant")
+
+
+async def test_async_provision_service_account_pre_cleans(client):
+    """provision_service_account always pre-deletes (idempotency)."""
+    with aioresponses() as m:
+        m.delete(
+            f"{BASE}/security/users/haassistant",
+            status=404,
+            body='{"statusCode":404,"error":"Not Found"}',
+        )
+        m.post(f"{BASE}/security/users", status=200, payload=envelope({}))
+        await client.async_provision_service_account(
+            username="haassistant",
+            password="hexpw42xyz",
+            role_type_id="Guest Admin",
+            permissions=["Edit Signal Chain"],
+        )
+        # Two requests: DELETE then POST
+        calls = list(m.requests.items())
+        methods = [k[0] for k, _ in calls]
+        assert "DELETE" in methods and "POST" in methods
+
+
+async def test_async_provision_service_account_replaces_existing(client):
+    """If the user already exists, it's deleted then recreated."""
+    with aioresponses() as m:
+        m.delete(f"{BASE}/security/users/haassistant", status=200, payload=envelope({}))
+        m.post(f"{BASE}/security/users", status=200, payload=envelope({}))
+        await client.async_provision_service_account(
+            username="haassistant",
+            password="hexpw42xyz",
+            role_type_id="Guest Admin",
+            permissions=["Edit Signal Chain"],
+        )

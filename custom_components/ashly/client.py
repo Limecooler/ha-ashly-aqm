@@ -11,6 +11,7 @@ import asyncio
 import json as json_mod
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
@@ -836,6 +837,82 @@ class AshlyClient:
         return LastRecalledPreset(
             name=None if name in (None, "", "None") else str(name),
             modified=_to_bool(data.get("modified", False)),
+        )
+
+    # ── User management (Admin / Edit Accounts required) ─────────────
+
+    async def async_list_users(self) -> list[str]:
+        """Return the list of configured usernames."""
+        raw = self._unwrap(await self._get("/security/users"))
+        if not isinstance(raw, list):
+            raise AshlyApiError("Unexpected /security/users shape")
+        return [str(u.get("username")) for u in raw if isinstance(u, dict) and u.get("username")]
+
+    async def async_create_user(
+        self,
+        *,
+        username: str,
+        password: str,
+        role_type_id: str,
+        permissions: Iterable[str] = (),
+        remote_permissions: Iterable[str] = (),
+    ) -> None:
+        """Create a new user with the supplied role + editable permissions.
+
+        Permission strings are bare names ("Edit Signal Chain"), NOT the
+        role-prefixed form used in GET responses — this is a device API
+        quirk documented in docs/SECURITY-API.md.
+
+        Username must be alphanumeric only, 1..20 chars; password 4..20
+        alphanumeric. The device returns 4xx on violation; this method
+        does not pre-validate.
+        """
+        await self._post(
+            "/security/users",
+            json={
+                "username": username,
+                "roleTypeId": role_type_id,
+                "password": password,
+                "permissions": list(permissions),
+                "remotePermissions": list(remote_permissions),
+            },
+        )
+
+    async def async_delete_user(self, username: str) -> bool:
+        """Delete the named user. Returns True if removed, False if absent.
+
+        Treats `not found` (404) as success-equivalent so this can be used
+        as idempotent pre-cleanup.
+        """
+        try:
+            await self._request("DELETE", f"/security/users/{quote(username, safe='')}")
+        except AshlyApiError as err:
+            # _request_once raises "Endpoint not found: ..." on HTTP 404. Use
+            # a case-insensitive match so any 404-bodied API error also passes.
+            if "not found" in str(err).lower():
+                return False
+            raise
+        return True
+
+    async def async_provision_service_account(
+        self,
+        *,
+        username: str,
+        password: str,
+        role_type_id: str,
+        permissions: Iterable[str] = (),
+    ) -> None:
+        """Idempotently create the integration's dedicated service-account user.
+
+        If a user with the same name already exists from a prior failed setup
+        attempt, it is deleted first to keep the flow re-runnable.
+        """
+        await self.async_delete_user(username)
+        await self.async_create_user(
+            username=username,
+            password=password,
+            role_type_id=role_type_id,
+            permissions=permissions,
         )
 
 

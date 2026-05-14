@@ -4,6 +4,72 @@ All notable changes to this integration are documented here. Versioning loosely
 follows [Semantic Versioning](https://semver.org/) with the caveat that the
 `<major>.<minor>.<patch>` field also drives HA's HACS update notifications.
 
+## 0.7.0 — 2026-05-14
+
+Security + setup-UX overhaul driven by the WebSocket / REST API reverse
+engineering documented in `docs/WEBSOCKET-API.md` and `docs/SECURITY-API.md`.
+No upgrade to the push channel yet — that lands in 0.8.0.
+
+### Setup flow
+
+- **Auto-try factory credentials first.** The initial setup step now asks
+  only for the host (+ optional port); Home Assistant probes the device with
+  `admin/secret` silently. If those work, the operator is taken directly to
+  the service-account step without typing a password. Only when the device
+  has been hardened do we fall through to a credentials prompt.
+- **Dedicated service-account provisioning.** When the device is still on
+  factory credentials, the setup flow offers (default ON) to create a
+  `haassistant` user with the minimum permissions the integration needs
+  (Edit Signal Chain, Preset Recall, Front Panels Control Edit, Rear Panel
+  Controls Edit, Preset Edit) and a randomly generated 16-char password. The
+  `admin` account stays untouched; HA never re-uses or stores the admin
+  credentials after provisioning.
+- **Discovery flows mirror the same behaviour.** DHCP- and zeroconf-
+  discovered devices are confirmed with an optional port override, then
+  the factory-creds probe + service-account offer fires.
+
+### Repairs
+
+- **`default_credentials` fix flow becomes a menu.** Two paths:
+  - *Provision dedicated `haassistant` user (recommended)* — uses the
+    still-default admin password to create the service account and switches
+    the entry's stored credentials. One click, no typing.
+  - *I've already changed the admin password* — the legacy form that asks
+    for new admin credentials.
+- The fix flow detects the case where admin was already changed and routes
+  the user to the manual path with a clear error.
+
+### Polling
+
+- **Default poll interval lowered from 30 s to 10 s.** Reverse engineering
+  confirmed the device handles a 9-endpoint gather every 10 s without
+  strain. Users who prefer the previous cadence can set it back via the
+  options flow (10–300 s range unchanged).
+
+### Client API
+
+- New `AshlyClient` methods: `async_list_users()`, `async_create_user()`,
+  `async_delete_user()` (idempotent — treats 404 as success),
+  `async_provision_service_account()` (delete-then-create wrapper for
+  re-runnable provisioning).
+- All methods follow the bare-permission-name format the device requires
+  (`"Edit Signal Chain"` not `"Guest Admin.Edit Signal Chain"`).
+
+### Documentation
+
+- New `docs/WEBSOCKET-API.md` (~25 KB) catalogues all 10 push topics + 55
+  events on port 8001, the cookie-based auth gating, traffic profile, and
+  every implementation gotcha.
+- New `docs/SECURITY-API.md` documents the user/role/permission model and
+  the recommended HA integration flow (now implemented in this release).
+
+### Internal
+
+- Test count up to 416 (was ~310), all passing under mypy strict.
+- `config_flow.py` refactored: `_validate_connection` renamed to
+  `_login_and_get_info`, new `_provision_service_account` helper, new
+  steps `credentials` and `service_account` flank the user step.
+
 ## 0.6.3 — 2026-05-13
 
 **Bug fix release** — fixes a ship-blocker spotted by a user during real-world

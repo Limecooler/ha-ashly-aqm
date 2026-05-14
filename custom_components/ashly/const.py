@@ -9,9 +9,34 @@ DOMAIN = "ashly"
 DEFAULT_PORT = 8000
 DEFAULT_USERNAME = "admin"
 DEFAULT_PASSWORD = "secret"
-DEFAULT_SCAN_INTERVAL = 30
+# Reduced from 30s to 10s after socket.io push reverse-engineering confirmed
+# the device handles a 9-endpoint gather every 10s without strain. A future
+# release will switch to push-only and drop this poll to ~10 min as a sanity
+# check, but for now the integration still relies on REST polling.
+DEFAULT_SCAN_INTERVAL = 10
 
 CONF_PORT = "port"
+CONF_CREATE_SERVICE_ACCOUNT = "create_service_account"
+
+# Dedicated service-account credentials used by the integration in preference
+# to the factory `admin` user. The device requires alphanumeric-only usernames
+# (1..20 chars) and passwords (4..20 chars), so the username is plain ASCII
+# and the password is a hex token generated at provision time.
+SERVICE_ACCOUNT_USERNAME = "haassistant"
+SERVICE_ACCOUNT_ROLE = "Guest Admin"
+# Bare permission names (no role prefix) — see docs/SECURITY-API.md for the
+# device's API quirk. Listed permissions are turned ON in addition to the
+# role's locked-on defaults; everything else is OFF.
+SERVICE_ACCOUNT_PERMISSIONS = (
+    "Edit Signal Chain",          # mute, channel name, mixer routing
+    "Preset Recall",              # service: ashly.recall_preset
+    "Front Panels Control Edit",  # power state, identify, frontPanelLEDEnable
+    "Rear Panel Controls Edit",   # GPO toggles
+    "Preset Edit",                # future preset save support
+)
+# 16 hex chars satisfies the alphanumeric, 4..20 constraint and is plenty of
+# entropy for an inside-network service credential.
+SERVICE_ACCOUNT_PASSWORD_HEX_BYTES = 8
 
 # Device topology (AQM1208)
 NUM_INPUTS = 12

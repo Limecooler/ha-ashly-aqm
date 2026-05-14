@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant import config_entries
@@ -16,11 +16,19 @@ except ImportError:
     from homeassistant.components.dhcp import DhcpServiceInfo
 
 from custom_components.ashly.client import (
+    AshlyApiError,
     AshlyAuthError,
     AshlyConnectionError,
     SystemInfo,
 )
-from custom_components.ashly.const import CONF_PORT, DOMAIN
+from custom_components.ashly.const import (
+    CONF_CREATE_SERVICE_ACCOUNT,
+    CONF_PORT,
+    DEFAULT_PASSWORD,
+    DEFAULT_USERNAME,
+    DOMAIN,
+    SERVICE_ACCOUNT_USERNAME,
+)
 
 VALID_INFO = SystemInfo(
     model="AQM1208",
@@ -31,7 +39,8 @@ VALID_INFO = SystemInfo(
     has_auto_mix=True,
 )
 
-USER_INPUT = {
+HOST_INPUT = {CONF_HOST: "192.168.1.100", CONF_PORT: 8000}
+USER_INPUT_FULL = {
     CONF_HOST: "192.168.1.100",
     CONF_PORT: 8000,
     CONF_USERNAME: "admin",
@@ -46,10 +55,11 @@ def _bypass_setup_entry():
         yield
 
 
-# ── user step ───────────────────────────────────────────────────────────
+# ── User step: default creds work → service_account → declined ──────────
 
 
-async def test_user_flow_success(hass: HomeAssistant) -> None:
+async def test_user_flow_defaults_work_decline_service_account(hass: HomeAssistant) -> None:
+    """Happy path: factory creds work, user declines service-account creation."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
@@ -57,15 +67,136 @@ async def test_user_flow_success(hass: HomeAssistant) -> None:
     assert result["step_id"] == "user"
 
     with patch(
-        "custom_components.ashly.config_flow._validate_connection",
+        "custom_components.ashly.config_flow._login_and_get_info",
         return_value=VALID_INFO,
     ):
-        result = await hass.config_entries.flow.async_configure(result["flow_id"], USER_INPUT)
-        await hass.async_block_till_done()
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], HOST_INPUT)
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "service_account"
+
+    # User unchecks the box
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_CREATE_SERVICE_ACCOUNT: False}
+    )
+    await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Living Room"
-    assert result["data"] == USER_INPUT
+    assert result["data"][CONF_USERNAME] == DEFAULT_USERNAME
+    assert result["data"][CONF_PASSWORD] == DEFAULT_PASSWORD
+
+
+async def test_user_flow_defaults_work_provision_service_account(
+    hass: HomeAssistant,
+) -> None:
+    """Factory creds work; user accepts; provisioned creds end up in the entry."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    with patch(
+        "custom_components.ashly.config_flow._login_and_get_info",
+        return_value=VALID_INFO,
+    ):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], HOST_INPUT)
+
+    assert result["step_id"] == "service_account"
+
+    with patch(
+        "custom_components.ashly.config_flow._provision_service_account",
+        return_value="generatedpassword42",
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_CREATE_SERVICE_ACCOUNT: True}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_USERNAME] == SERVICE_ACCOUNT_USERNAME
+    assert result["data"][CONF_PASSWORD] == "generatedpassword42"
+
+
+# ── User step: defaults fail → credentials path ─────────────────────────
+
+
+async def test_user_flow_defaults_fail_falls_through_to_credentials(
+    hass: HomeAssistant,
+) -> None:
+    """If factory creds 401, user is asked for real credentials."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    with patch(
+        "custom_components.ashly.config_flow._login_and_get_info",
+        side_effect=AshlyAuthError("hardened"),
+    ):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], HOST_INPUT)
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "credentials"
+
+    # Custom (non-factory) creds → skip service_account step entirely
+    with patch(
+        "custom_components.ashly.config_flow._login_and_get_info",
+        return_value=VALID_INFO,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_USERNAME: "admin", CONF_PASSWORD: "operatorPass!"},
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_USERNAME] == "admin"
+    assert result["data"][CONF_PASSWORD] == "operatorPass!"
+
+
+async def test_user_flow_user_types_factory_creds_offers_service_account(
+    hass: HomeAssistant,
+) -> None:
+    """If the user manually enters admin/secret at credentials step, still offer service account."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    with patch(
+        "custom_components.ashly.config_flow._login_and_get_info",
+        side_effect=AshlyAuthError("x"),
+    ):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], HOST_INPUT)
+    assert result["step_id"] == "credentials"
+
+    with patch(
+        "custom_components.ashly.config_flow._login_and_get_info",
+        return_value=VALID_INFO,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_USERNAME: DEFAULT_USERNAME, CONF_PASSWORD: DEFAULT_PASSWORD},
+        )
+    assert result["step_id"] == "service_account"
+
+
+@pytest.mark.parametrize(
+    ("exc", "error"),
+    [
+        (AshlyConnectionError("x"), "cannot_connect"),
+        (RuntimeError("x"), "unknown"),
+    ],
+)
+async def test_user_flow_errors(hass: HomeAssistant, exc, error) -> None:
+    """Connection errors keep the user step open; auth errors do NOT (handled separately)."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    with patch(
+        "custom_components.ashly.config_flow._login_and_get_info",
+        side_effect=exc,
+    ):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], HOST_INPUT)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": error}
 
 
 @pytest.mark.parametrize(
@@ -76,15 +207,26 @@ async def test_user_flow_success(hass: HomeAssistant) -> None:
         (RuntimeError("x"), "unknown"),
     ],
 )
-async def test_user_flow_errors(hass: HomeAssistant, exc, error) -> None:
+async def test_credentials_step_errors(hass: HomeAssistant, exc, error) -> None:
+    """Errors at the credentials step surface in the form."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
     with patch(
-        "custom_components.ashly.config_flow._validate_connection",
+        "custom_components.ashly.config_flow._login_and_get_info",
+        side_effect=AshlyAuthError("force credentials step"),
+    ):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], HOST_INPUT)
+    assert result["step_id"] == "credentials"
+
+    with patch(
+        "custom_components.ashly.config_flow._login_and_get_info",
         side_effect=exc,
     ):
-        result = await hass.config_entries.flow.async_configure(result["flow_id"], USER_INPUT)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_USERNAME: "admin", CONF_PASSWORD: "tryagain"},
+        )
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": error}
 
@@ -103,12 +245,48 @@ async def test_user_flow_no_mac_aborts(hass: HomeAssistant) -> None:
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
     with patch(
-        "custom_components.ashly.config_flow._validate_connection",
+        "custom_components.ashly.config_flow._login_and_get_info",
         return_value=no_mac,
     ):
-        result = await hass.config_entries.flow.async_configure(result["flow_id"], USER_INPUT)
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], HOST_INPUT)
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "no_mac"
+
+
+# ── service_account step error paths ────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("exc", "error"),
+    [
+        (AshlyConnectionError("x"), "cannot_connect"),
+        (AshlyAuthError("x"), "invalid_auth"),
+        (AshlyApiError("x"), "provision_failed"),
+        (RuntimeError("x"), "unknown"),
+    ],
+)
+async def test_service_account_step_errors(hass: HomeAssistant, exc, error) -> None:
+    """If provisioning fails, surface the error on the same step."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    with patch(
+        "custom_components.ashly.config_flow._login_and_get_info",
+        return_value=VALID_INFO,
+    ):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], HOST_INPUT)
+    assert result["step_id"] == "service_account"
+
+    with patch(
+        "custom_components.ashly.config_flow._provision_service_account",
+        side_effect=exc,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_CREATE_SERVICE_ACCOUNT: True}
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "service_account"
+    assert result["errors"] == {"base": error}
 
 
 # ── DHCP discovery ──────────────────────────────────────────────────────
@@ -127,7 +305,8 @@ async def test_dhcp_non_ashly_aborts(hass: HomeAssistant) -> None:
     assert result["reason"] == "not_ashly_device"
 
 
-async def test_dhcp_confirm_success(hass: HomeAssistant) -> None:
+async def test_dhcp_confirm_defaults_work_offers_service_account(hass: HomeAssistant) -> None:
+    """DHCP-discovered device with factory creds → service_account step."""
     info = DhcpServiceInfo(
         ip="192.168.1.114",
         hostname="aqm1208_0014AA112233",
@@ -140,17 +319,31 @@ async def test_dhcp_confirm_success(hass: HomeAssistant) -> None:
     assert result["step_id"] == "discovery_confirm"
 
     with patch(
-        "custom_components.ashly.config_flow._validate_connection",
+        "custom_components.ashly.config_flow._login_and_get_info",
         return_value=VALID_INFO,
     ):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {CONF_USERNAME: "admin", CONF_PASSWORD: "secret"},
-        )
-        await hass.async_block_till_done()
+        # The confirm form now collects port only (no creds).
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
 
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_HOST] == "192.168.1.114"
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "service_account"
+
+
+async def test_dhcp_confirm_defaults_fail_falls_to_credentials(hass: HomeAssistant) -> None:
+    info = DhcpServiceInfo(
+        ip="192.168.1.114",
+        hostname="aqm1208_0014AA112233",
+        macaddress="0014aa112233",
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_DHCP}, data=info
+    )
+    with patch(
+        "custom_components.ashly.config_flow._login_and_get_info",
+        side_effect=AshlyAuthError("x"),
+    ):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["step_id"] == "credentials"
 
 
 # ── reauth ─────────────────────────────────────────────────────────────
@@ -163,7 +356,7 @@ async def test_reauth_success(hass: HomeAssistant, mock_config_entry) -> None:
     assert result["step_id"] == "reauth_confirm"
 
     with patch(
-        "custom_components.ashly.config_flow._validate_connection",
+        "custom_components.ashly.config_flow._login_and_get_info",
         return_value=VALID_INFO,
     ):
         result = await hass.config_entries.flow.async_configure(
@@ -186,12 +379,12 @@ async def test_reconfigure_success(hass: HomeAssistant, mock_config_entry) -> No
     assert result["type"] is FlowResultType.FORM
 
     with patch(
-        "custom_components.ashly.config_flow._validate_connection",
+        "custom_components.ashly.config_flow._login_and_get_info",
         return_value=VALID_INFO,
     ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {**USER_INPUT, CONF_HOST: "192.168.1.200"},
+            {**USER_INPUT_FULL, CONF_HOST: "192.168.1.200"},
         )
         await hass.async_block_till_done()
 
@@ -215,35 +408,52 @@ async def test_options_flow(hass: HomeAssistant, mock_config_entry) -> None:
     assert result["data"] == {"poll_interval": 60}
 
 
-# ── _validate_connection direct ────────────────────────────────────────
+# ── _login_and_get_info direct ─────────────────────────────────────────
 
 
-async def test_validate_connection_invokes_client(hass: HomeAssistant) -> None:
-    """_validate_connection logs in and fetches system info from the client."""
-    from unittest.mock import AsyncMock
+async def test_login_and_get_info_invokes_client(hass: HomeAssistant) -> None:
+    """_login_and_get_info logs in and fetches system info from the client."""
+    from custom_components.ashly.config_flow import _login_and_get_info
 
-    from custom_components.ashly.config_flow import _validate_connection
-
-    with patch("custom_components.ashly.config_flow.AshlyClient") as MockClient:
+    with (
+        patch("custom_components.ashly.config_flow.async_create_clientsession"),
+        patch("custom_components.ashly.config_flow.AshlyClient") as MockClient,
+    ):
         instance = MockClient.return_value
         instance.async_login = AsyncMock()
         instance.async_get_system_info = AsyncMock(return_value=VALID_INFO)
-        result = await _validate_connection(hass, "192.0.2.1", 8000, "admin", "secret")
+        result = await _login_and_get_info(hass, "192.0.2.1", 8000, "admin", "secret")
         assert result is VALID_INFO
         instance.async_login.assert_awaited_once()
         instance.async_get_system_info.assert_awaited_once()
+
+
+async def test_provision_service_account_creates_and_verifies(hass: HomeAssistant) -> None:
+    """_provision_service_account calls async_provision_service_account then verifies login."""
+    from custom_components.ashly.config_flow import _provision_service_account
+
+    with (
+        patch("custom_components.ashly.config_flow.async_create_clientsession"),
+        patch("custom_components.ashly.config_flow.AshlyClient") as MockClient,
+    ):
+        instance = MockClient.return_value
+        instance.async_login = AsyncMock()
+        instance.async_provision_service_account = AsyncMock()
+        pw = await _provision_service_account(hass, "192.0.2.1", 8000, "admin", "secret")
+        # Random 16-hex-char password
+        assert len(pw) == 16
+        assert all(c in "0123456789abcdef" for c in pw)
+        # provision called once on the admin client; login called twice
+        # (once on admin client, once on the verify client).
+        instance.async_provision_service_account.assert_awaited_once()
+        assert instance.async_login.await_count == 2
 
 
 # ── DHCP discovery edge cases ──────────────────────────────────────────
 
 
 async def test_dhcp_unparseable_mac_aborts(hass: HomeAssistant) -> None:
-    """If format_mac raises on the DHCP payload's MAC, we abort cleanly.
-
-    DhcpServiceInfo validates that macaddress is non-None at construction,
-    so we exercise the defensive branch by calling async_step_dhcp directly
-    with a stub object whose macaddress fails format_mac.
-    """
+    """If format_mac raises on the DHCP payload's MAC, we abort cleanly."""
     from custom_components.ashly.config_flow import AshlyConfigFlow
 
     class _Stub:
@@ -262,7 +472,6 @@ async def test_dhcp_unparseable_mac_aborts(hass: HomeAssistant) -> None:
     ("exc", "error"),
     [
         (AshlyConnectionError("x"), "cannot_connect"),
-        (AshlyAuthError("x"), "invalid_auth"),
         (RuntimeError("x"), "unknown"),
     ],
 )
@@ -276,13 +485,10 @@ async def test_dhcp_confirm_errors(hass: HomeAssistant, exc, error) -> None:
         DOMAIN, context={"source": config_entries.SOURCE_DHCP}, data=info
     )
     with patch(
-        "custom_components.ashly.config_flow._validate_connection",
+        "custom_components.ashly.config_flow._login_and_get_info",
         side_effect=exc,
     ):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {CONF_USERNAME: "admin", CONF_PASSWORD: "secret"},
-        )
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": error}
 
@@ -306,13 +512,10 @@ async def test_dhcp_confirm_mac_mismatch_aborts(hass: HomeAssistant) -> None:
         DOMAIN, context={"source": config_entries.SOURCE_DHCP}, data=discovery
     )
     with patch(
-        "custom_components.ashly.config_flow._validate_connection",
+        "custom_components.ashly.config_flow._login_and_get_info",
         return_value=drifted,
     ):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {CONF_USERNAME: "admin", CONF_PASSWORD: "secret"},
-        )
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "unique_id_mismatch"
 
@@ -332,7 +535,7 @@ async def test_reauth_errors(hass: HomeAssistant, mock_config_entry, exc, error)
     mock_config_entry.add_to_hass(hass)
     result = await mock_config_entry.start_reauth_flow(hass)
     with patch(
-        "custom_components.ashly.config_flow._validate_connection",
+        "custom_components.ashly.config_flow._login_and_get_info",
         side_effect=exc,
     ):
         result = await hass.config_entries.flow.async_configure(
@@ -356,7 +559,7 @@ async def test_reauth_mac_mismatch_aborts(hass: HomeAssistant, mock_config_entry
         has_auto_mix=False,
     )
     with patch(
-        "custom_components.ashly.config_flow._validate_connection",
+        "custom_components.ashly.config_flow._login_and_get_info",
         return_value=drifted,
     ):
         result = await hass.config_entries.flow.async_configure(
@@ -382,12 +585,12 @@ async def test_reconfigure_errors(hass: HomeAssistant, mock_config_entry, exc, e
     mock_config_entry.add_to_hass(hass)
     result = await mock_config_entry.start_reconfigure_flow(hass)
     with patch(
-        "custom_components.ashly.config_flow._validate_connection",
+        "custom_components.ashly.config_flow._login_and_get_info",
         side_effect=exc,
     ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            USER_INPUT,
+            USER_INPUT_FULL,
         )
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": error}
@@ -422,7 +625,6 @@ async def test_zeroconf_extracts_mac_from_hostname(hass: HomeAssistant) -> None:
 
 
 async def test_zeroconf_non_ashly_hostname_aborts(hass: HomeAssistant) -> None:
-    """A hostname that doesn't start with aqm/ashly aborts (defence in depth)."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": config_entries.SOURCE_ZEROCONF},
@@ -433,7 +635,6 @@ async def test_zeroconf_non_ashly_hostname_aborts(hass: HomeAssistant) -> None:
 
 
 async def test_zeroconf_wrong_oui_aborts(hass: HomeAssistant) -> None:
-    """Hostname carries a MAC with non-Ashly OUI prefix — abort."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": config_entries.SOURCE_ZEROCONF},
@@ -444,13 +645,6 @@ async def test_zeroconf_wrong_oui_aborts(hass: HomeAssistant) -> None:
 
 
 async def test_zeroconf_aborts_when_no_mac(hass: HomeAssistant) -> None:
-    """Hostname has no MAC suffix and properties don't carry one — abort.
-
-    Previously we showed the credentials form anyway, but a hostname starting
-    with `aqm*` is too weak a signal to ask the operator for AquaControl
-    credentials (a neighbour's printer could clear the filter). Users with
-    an unadvertised AQM can use the manual setup flow.
-    """
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": config_entries.SOURCE_ZEROCONF},
@@ -461,7 +655,6 @@ async def test_zeroconf_aborts_when_no_mac(hass: HomeAssistant) -> None:
 
 
 async def test_zeroconf_uses_properties_mac(hass: HomeAssistant) -> None:
-    """If hostname lacks MAC but properties contain it, that's used."""
     try:
         from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
     except ImportError:
@@ -483,8 +676,6 @@ async def test_zeroconf_uses_properties_mac(hass: HomeAssistant) -> None:
 
 
 async def test_zeroconf_invalid_hostname_mac_aborts(hass: HomeAssistant) -> None:
-    """A 12-char tail that isn't actually hex falls through to property lookup,
-    finds none, and aborts (stricter post-v0.6.2)."""
     info = _zeroconf_info(hostname="aqm_gggggggggggg.local.")
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_ZEROCONF}, data=info
@@ -494,11 +685,6 @@ async def test_zeroconf_invalid_hostname_mac_aborts(hass: HomeAssistant) -> None
 
 
 async def test_zeroconf_uppercase_hostname_mac_extracted(hass: HomeAssistant) -> None:
-    """Real-world mDNS often advertises uppercase MAC in hostname — handle it."""
-    # Note: HA lowercases the hostname before passing to async_step_zeroconf,
-    # so by the time we see it, mixed-case is already normalised. But the
-    # post-removesuffix `.lower()` belt-and-suspenders guards against the
-    # case where HA's normalisation regresses.
     info = _zeroconf_info(hostname="aqm1208_0014AA778899.local.".lower())
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_ZEROCONF}, data=info
@@ -508,8 +694,6 @@ async def test_zeroconf_uppercase_hostname_mac_extracted(hass: HomeAssistant) ->
 
 
 async def test_zeroconf_format_mac_raises_aborts(hass: HomeAssistant) -> None:
-    """If format_mac raises on both the hostname and the property attempts,
-    the flow aborts (stricter post-v0.6.2)."""
     with patch(
         "custom_components.ashly.config_flow.format_mac",
         side_effect=AttributeError("bogus"),
@@ -526,8 +710,6 @@ async def test_zeroconf_format_mac_raises_aborts(hass: HomeAssistant) -> None:
 async def test_zeroconf_format_mac_raises_on_property_aborts(
     hass: HomeAssistant,
 ) -> None:
-    """If format_mac raises on the property-supplied MAC and there's no
-    hostname MAC, the flow aborts."""
     try:
         from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
     except ImportError:
@@ -567,14 +749,20 @@ async def test_discovery_confirm_accepts_port_override(hass: HomeAssistant) -> N
         DOMAIN, context={"source": config_entries.SOURCE_DHCP}, data=info
     )
     with patch(
-        "custom_components.ashly.config_flow._validate_connection",
+        "custom_components.ashly.config_flow._login_and_get_info",
         return_value=VALID_INFO,
     ):
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {CONF_PORT: 9000, CONF_USERNAME: "admin", CONF_PASSWORD: "newpass"},
+            result["flow_id"], {CONF_PORT: 9000}
         )
-        await hass.async_block_till_done()
+    # Defaults work → service_account step
+    assert result["step_id"] == "service_account"
+
+    # Decline service account → entry created with port 9000
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_CREATE_SERVICE_ACCOUNT: False}
+    )
+    await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_PORT] == 9000
 
@@ -592,12 +780,12 @@ async def test_reconfigure_no_mac_aborts(hass: HomeAssistant, mock_config_entry)
         has_auto_mix=False,
     )
     with patch(
-        "custom_components.ashly.config_flow._validate_connection",
+        "custom_components.ashly.config_flow._login_and_get_info",
         return_value=no_mac,
     ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            USER_INPUT,
+            USER_INPUT_FULL,
         )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "no_mac"

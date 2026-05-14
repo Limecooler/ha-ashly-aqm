@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
-from custom_components.ashly.client import AshlyAuthError, AshlyConnectionError
-from custom_components.ashly.const import DOMAIN
+from custom_components.ashly.client import (
+    AshlyApiError,
+    AshlyAuthError,
+    AshlyConnectionError,
+)
+from custom_components.ashly.const import DOMAIN, SERVICE_ACCOUNT_USERNAME
 from custom_components.ashly.repairs import (
     DefaultCredentialsRepairFlow,
     _NoopRepairFlow,
@@ -46,71 +50,162 @@ async def test_noop_repair_flow_immediately_creates_entry(hass: HomeAssistant):
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
 
-async def test_default_credentials_repair_flow_happy_path(
-    hass: HomeAssistant, loaded_entry, mock_client
-):
-    """Submitting valid new credentials updates the entry and reloads."""
+async def test_init_shows_menu(hass: HomeAssistant, loaded_entry) -> None:
+    """The init step presents the provision/manual menu."""
     flow = DefaultCredentialsRepairFlow(hass, loaded_entry.entry_id)
     flow.hass = hass
-    # First call shows the form.
     result = await flow.async_step_init()
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "init"
+    assert result["type"] is FlowResultType.MENU
+    assert set(result["menu_options"]) == {"provision", "manual"}
 
-    # Patch the AshlyClient (and async_login) so the validation step doesn't
-    # try to open a real socket.
+
+# ── Provision path ────────────────────────────────────────────────────
+
+
+async def test_provision_path_happy(hass: HomeAssistant, loaded_entry, mock_client):
+    """User selects provision; default creds work; new service account stored."""
+    flow = DefaultCredentialsRepairFlow(hass, loaded_entry.entry_id)
+    flow.hass = hass
+
+    # First, the provision step shows a confirmation form.
+    result = await flow.async_step_provision()
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "provision"
+
+    # Patch the actual provisioning client interactions.
     with (
-        patch(
-            "custom_components.ashly.repairs.AshlyClient.async_login",
-            return_value=None,
-        ),
+        patch("custom_components.ashly.repairs.async_create_clientsession"),
+        patch("custom_components.ashly.repairs.AshlyClient") as MockClient,
+    ):
+        instance = MockClient.return_value
+        instance.async_login = AsyncMock()
+        instance.async_provision_service_account = AsyncMock()
+        result = await flow.async_step_provision({})
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert loaded_entry.data[CONF_USERNAME] == SERVICE_ACCOUNT_USERNAME
+    # password should be a 16-char hex string
+    pw = loaded_entry.data[CONF_PASSWORD]
+    assert isinstance(pw, str) and len(pw) == 16
+    assert all(c in "0123456789abcdef" for c in pw)
+
+
+async def test_provision_path_admin_changed(hass: HomeAssistant, loaded_entry, mock_client):
+    """If admin password has already changed, surface admin_changed error."""
+    flow = DefaultCredentialsRepairFlow(hass, loaded_entry.entry_id)
+    flow.hass = hass
+
+    with (
+        patch("custom_components.ashly.repairs.async_create_clientsession"),
+        patch("custom_components.ashly.repairs.AshlyClient") as MockClient,
+    ):
+        MockClient.return_value.async_login = AsyncMock(side_effect=AshlyAuthError("x"))
+        result = await flow.async_step_provision({})
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "admin_changed"}
+
+
+async def test_provision_path_connection_error(
+    hass: HomeAssistant, loaded_entry, mock_client
+):
+    flow = DefaultCredentialsRepairFlow(hass, loaded_entry.entry_id)
+    flow.hass = hass
+
+    with (
+        patch("custom_components.ashly.repairs.async_create_clientsession"),
+        patch("custom_components.ashly.repairs.AshlyClient") as MockClient,
+    ):
+        MockClient.return_value.async_login = AsyncMock(side_effect=AshlyConnectionError("x"))
+        result = await flow.async_step_provision({})
+
+    assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_provision_path_api_error(hass: HomeAssistant, loaded_entry, mock_client):
+    """Provision call fails after login → provision_failed."""
+    flow = DefaultCredentialsRepairFlow(hass, loaded_entry.entry_id)
+    flow.hass = hass
+
+    with (
+        patch("custom_components.ashly.repairs.async_create_clientsession"),
+        patch("custom_components.ashly.repairs.AshlyClient") as MockClient,
+    ):
+        inst = MockClient.return_value
+        inst.async_login = AsyncMock()
+        inst.async_provision_service_account = AsyncMock(side_effect=AshlyApiError("bad"))
+        result = await flow.async_step_provision({})
+
+    assert result["errors"] == {"base": "provision_failed"}
+
+
+async def test_provision_path_aborts_if_entry_gone(hass: HomeAssistant):
+    flow = DefaultCredentialsRepairFlow(hass, "nonexistent-entry-id")
+    flow.hass = hass
+    result = await flow.async_step_provision()
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "entry_not_found"
+
+
+# ── Manual path (legacy) ──────────────────────────────────────────────
+
+
+async def test_manual_path_happy(hass: HomeAssistant, loaded_entry, mock_client):
+    flow = DefaultCredentialsRepairFlow(hass, loaded_entry.entry_id)
+    flow.hass = hass
+    result = await flow.async_step_manual()
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "manual"
+
+    with (
+        patch("custom_components.ashly.repairs.async_create_clientsession"),
+        patch("custom_components.ashly.repairs.AshlyClient.async_login", return_value=None),
         patch("custom_components.ashly.AshlyClient", return_value=mock_client),
     ):
-        result = await flow.async_step_init({CONF_USERNAME: "alice", CONF_PASSWORD: "hunter2"})
+        result = await flow.async_step_manual({CONF_USERNAME: "alice", CONF_PASSWORD: "hunter2"})
         await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert loaded_entry.data[CONF_USERNAME] == "alice"
     assert loaded_entry.data[CONF_PASSWORD] == "hunter2"
 
 
-async def test_default_credentials_repair_flow_invalid_auth(
-    hass: HomeAssistant, loaded_entry, mock_client
-):
-    """If the new credentials still fail auth, the form re-shows with invalid_auth."""
+async def test_manual_path_invalid_auth(hass: HomeAssistant, loaded_entry, mock_client):
     flow = DefaultCredentialsRepairFlow(hass, loaded_entry.entry_id)
     flow.hass = hass
-    # Make the next login attempt fail.
-    with patch(
-        "custom_components.ashly.repairs.AshlyClient.async_login",
-        side_effect=AshlyAuthError("still wrong"),
+    with (
+        patch("custom_components.ashly.repairs.async_create_clientsession"),
+        patch(
+            "custom_components.ashly.repairs.AshlyClient.async_login",
+            side_effect=AshlyAuthError("nope"),
+        ),
     ):
-        result = await flow.async_step_init({CONF_USERNAME: "alice", CONF_PASSWORD: "wrong"})
-    assert result["type"] is FlowResultType.FORM
+        result = await flow.async_step_manual(
+            {CONF_USERNAME: "alice", CONF_PASSWORD: "wrong"}
+        )
     assert result["errors"] == {"base": "invalid_auth"}
 
 
-async def test_default_credentials_repair_flow_connection_error(
-    hass: HomeAssistant, loaded_entry, mock_client
-):
-    """If the device is unreachable while fixing, the form re-shows with cannot_connect."""
+async def test_manual_path_connection_error(hass: HomeAssistant, loaded_entry, mock_client):
     flow = DefaultCredentialsRepairFlow(hass, loaded_entry.entry_id)
     flow.hass = hass
-    with patch(
-        "custom_components.ashly.repairs.AshlyClient.async_login",
-        side_effect=AshlyConnectionError("offline"),
+    with (
+        patch("custom_components.ashly.repairs.async_create_clientsession"),
+        patch(
+            "custom_components.ashly.repairs.AshlyClient.async_login",
+            side_effect=AshlyConnectionError("offline"),
+        ),
     ):
-        result = await flow.async_step_init({CONF_USERNAME: "alice", CONF_PASSWORD: "anything"})
-    assert result["type"] is FlowResultType.FORM
+        result = await flow.async_step_manual(
+            {CONF_USERNAME: "alice", CONF_PASSWORD: "anything"}
+        )
     assert result["errors"] == {"base": "cannot_connect"}
 
 
-async def test_default_credentials_repair_flow_aborts_if_entry_gone(
-    hass: HomeAssistant, loaded_entry
-):
-    """If the entry was removed between issue surfacing and fix-flow start, abort."""
+async def test_manual_path_aborts_if_entry_gone(hass: HomeAssistant):
     flow = DefaultCredentialsRepairFlow(hass, "nonexistent-entry-id")
     flow.hass = hass
-    result = await flow.async_step_init()
+    result = await flow.async_step_manual()
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "entry_not_found"
 

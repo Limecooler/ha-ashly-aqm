@@ -3,32 +3,46 @@
     "step": {
       "user": {
         "title": "Connect to Ashly Device",
-        "description": "Enter the connection details for your Ashly AQM-series audio processor. Home Assistant will probe the device and confirm the connection before creating the entry.",
+        "description": "Enter the IP address of your Ashly AQM-series audio processor. Home Assistant will attempt to log in with the factory credentials (`admin` / `secret`); if those have been changed, you'll be asked for the current ones on the next screen.",
         "data": {
           "host": "Host",
-          "port": "Port",
+          "port": "Port"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the device. Look on the device's front panel under Network, or in your router's DHCP table. Do not enter a URL — just the host (e.g. `192.168.1.50`).",
+          "port": "Only change if your network admin has remapped the AquaControl API to a non-standard port."
+        }
+      },
+      "credentials": {
+        "title": "Sign in to {host}",
+        "description": "The factory credentials didn't work on {host}:{port}, so the device must already have been hardened. Enter the current admin credentials.",
+        "data": {
           "username": "Username",
           "password": "Password"
         },
         "data_description": {
-          "host": "IP address or hostname of the device. Look on the device's front panel under Network, or in your router's DHCP table. Do not enter a URL — just the host (e.g. `192.168.1.50`).",
-          "port": "Only change if your network admin has remapped the AquaControl API to a non-standard port.",
-          "username": "Default `admin` on a new device. Change this in AquaControl Portal first if your device has been hardened.",
-          "password": "Required. The factory default is `secret`. **Change the password in AquaControl Portal before going to production** — anyone on the LAN can otherwise control your audio system."
+          "username": "Default `admin` on a factory device. Change this in AquaControl Portal first if your device has been hardened.",
+          "password": "Required. The factory default is `secret`."
+        }
+      },
+      "service_account": {
+        "title": "Create a dedicated user (recommended)",
+        "description": "Your Ashly device at {host} is still using the factory `admin` / `secret` credentials. Home Assistant can create a dedicated `{service_user}` user with only the permissions it needs (mute / preset recall / front-panel control). Your `admin` account stays untouched and you can still use it from AquaControl Portal.\n\nIf you decline, Home Assistant will run as `admin` — works, but anyone on the LAN who guesses `admin/secret` can also control your audio. You should at minimum change the admin password.",
+        "data": {
+          "create_service_account": "Create dedicated user `{service_user}`"
+        },
+        "data_description": {
+          "create_service_account": "Recommended. Generates a random password and stores it in Home Assistant; you never need to type or remember it."
         }
       },
       "discovery_confirm": {
         "title": "Ashly Device Discovered",
-        "description": "An Ashly {model} was found at {host} (port {port}). Enter credentials to complete setup. You can also override the port here if your AquaControl deployment uses a non-standard one.",
+        "description": "An Ashly {model} was found at {host} (port {port}). Home Assistant will attempt to log in with the factory credentials when you confirm. You can override the port if your AquaControl deployment is on a non-standard one.",
         "data": {
-          "port": "Port",
-          "username": "Username",
-          "password": "Password"
+          "port": "Port"
         },
         "data_description": {
-          "port": "Default 8000 — only change if AquaControl was remapped.",
-          "username": "Default `admin` on a factory device.",
-          "password": "Required. Don't reuse the factory password (`secret`)."
+          "port": "Default 8000 — only change if AquaControl was remapped."
         }
       },
       "reauth_confirm": {
@@ -59,6 +73,7 @@
     "error": {
       "cannot_connect": "Could not reach the device at {host}:{port}. Check that the device is powered on, that you entered only the IP or hostname (not a full URL), and that port {port} is reachable from Home Assistant. The AquaControl API is on port 8000 by default — not the device's web UI port.",
       "invalid_auth": "Authentication failed. Verify the username and password against the AquaControl Portal login. Factory defaults are `admin` / `secret`; the device may have been hardened in production.",
+      "provision_failed": "Could not create the dedicated user on the device. The factory credentials were accepted but the user-creation request was rejected. Check the Home Assistant logs for details, then try again or decline the service account.",
       "unknown": "An unexpected error occurred. Check the Home Assistant logs for details."
     },
     "abort": {
@@ -78,7 +93,7 @@
           "poll_interval": "Polling interval (seconds)"
         },
         "data_description": {
-          "poll_interval": "How often Home Assistant polls the device for state. **30 s is recommended** for most setups. Lower values feel snappier in dashboards but put more load on the device's small CPU. Live meter readings update at 1 Hz via a separate websocket regardless of this setting."
+          "poll_interval": "How often Home Assistant polls the device for state. **10 s is the default** for responsive dashboards. Higher values reduce CPU load on the embedded device; lower values feel snappier but can starve the device if multiple consumers share it. Live meter readings update at 1 Hz via a separate websocket regardless of this setting."
         }
       }
     }
@@ -152,17 +167,38 @@
       "fix_flow": {
         "step": {
           "init": {
+            "title": "Secure the {name} device",
+            "description": "The device is still using the factory `admin/secret` credentials. Choose how to harden it:\n\n• **Provision a dedicated user** — Home Assistant creates a `{service_user}` account with only the permissions it needs, generates a random password, and stores it. Your admin account stays untouched (but you should still change its password from AquaControl Portal).\n\n• **I've already changed the admin password** — enter the new admin credentials you set on the device.",
+            "menu_options": {
+              "provision": "Provision dedicated `{service_user}` user (recommended)",
+              "manual": "I've already changed the admin password"
+            }
+          },
+          "provision": {
+            "title": "Create dedicated user for {name}",
+            "description": "Home Assistant will log in to {host} as `admin/secret`, create a `{service_user}` user with only the permissions it needs, and switch its own credentials to the new account. You don't need to type a password — one will be generated and stored.\n\nClick **Submit** to continue."
+          },
+          "manual": {
             "title": "Update credentials for {name}",
-            "description": "The Ashly device {name} at {host} is using the factory password `secret`. This is a security risk on a networked audio device — anyone on the LAN can change presets, mute zones, or alter mixer routing.\n\nTo fix:\n1. Change the password on the device using the AquaControl Portal web UI.\n2. Enter the new credentials below; Home Assistant will reconnect with the updated password.",
+            "description": "Enter the credentials you set on the device at {host}.",
             "data": {
               "username": "Username",
               "password": "New password"
             },
             "data_description": {
               "username": "Usually still `admin` unless you also changed the username on the device.",
-              "password": "The new password you just set on the device."
+              "password": "The new password you set on the device."
             }
           }
+        },
+        "error": {
+          "invalid_auth": "Authentication failed. Verify the username and password against the AquaControl Portal login.",
+          "cannot_connect": "Could not reach the device. Check that it's powered on and reachable on the network.",
+          "admin_changed": "The factory admin password no longer works on this device — somebody must have already changed it. Use the **I've already changed the admin password** option instead.",
+          "provision_failed": "Could not create the dedicated user on the device. Check the Home Assistant logs for details."
+        },
+        "abort": {
+          "entry_not_found": "This Home Assistant entry no longer exists."
         }
       }
     },
