@@ -210,24 +210,6 @@ class AquaControlClient:
         listener don't propagate to others.
         """
         event = parse_event(topic, payload)
-
-        # Learn our own session ID lazily from any echo that carries a
-        # string uniqueId. We can't know which UUID is "us" until we see
-        # our own change come back to us, but the typical setup pattern
-        # is that the client immediately performs at least one mutation
-        # after connecting (e.g. an `identify` ping). Consumers that need
-        # this earlier can capture it from the integration's REST client.
-        if (
-            self._session_id is None
-            and isinstance(event.unique_id, str)
-            and event.is_state_change
-        ):
-            # NB: we set this on every state-change event we see, not just
-            # the first — and that's fine because uniqueIds collide
-            # in-session. The HA integration should set this explicitly
-            # via :meth:`set_session_id` once it knows.
-            pass  # see set_session_id
-
         await self._dispatch(event)
 
     async def _dispatch(self, event: Event) -> None:

@@ -828,3 +828,362 @@ async def _await_predicate(predicate) -> None:
     """Block until predicate() returns truthy, polling every 100 ms."""
     while not predicate():
         await asyncio.sleep(0.1)
+
+
+# ── Coverage-fillers (paths the other tests don't hit) ─────────────────
+
+
+async def test_aenter_aexit_round_trip() -> None:
+    """async with covers __aenter__ and __aexit__."""
+    async with AquaControlClient(
+        host=_host(),
+        username=_username(),
+        password=_password(),
+        rest_port=_rest_port(),
+    ) as c:
+        deadline = asyncio.get_running_loop().time() + CONNECT_TIMEOUT_S
+        while not c.connected:
+            if asyncio.get_running_loop().time() > deadline:
+                pytest.fail("did not connect inside async with")
+            await asyncio.sleep(0.1)
+        assert c.connected
+    # On exit __aexit__ called disconnect() — verify the client is no
+    # longer marked connected.
+    assert not c.connected
+
+
+async def test_pre_connect_property_reads() -> None:
+    """Reading properties before connect() is safe and returns sane defaults."""
+    from aquacontrol.topics import ALL_TOPICS
+
+    c = AquaControlClient(host=_host(), username=_username(), password=_password())
+    assert c.host == _host()
+    assert not c.connected
+    assert c.session_id is None
+    # Default topic list is the full set
+    assert c.topics == ALL_TOPICS
+    assert c.listener_count == 0
+
+
+async def test_listener_count_property(client: AquaControlClient) -> None:
+    """listener_count reflects active listeners across all kinds, with removals."""
+    base = client.listener_count
+    r1 = client.on_any(lambda _e: None)
+    r2 = client.on_topic("System", lambda _e: None)
+    r3 = client.on_event("Set Chain Mute", lambda _e: None)
+    assert client.listener_count == base + 3
+    r1()
+    assert client.listener_count == base + 2
+    r2()
+    r3()
+    assert client.listener_count == base
+
+
+async def test_set_session_id_with_various_inputs(client: AquaControlClient) -> None:
+    """set_session_id accepts str, int, and None."""
+    client.set_session_id("some-uuid")
+    assert client.session_id == "some-uuid"
+    client.set_session_id(0)
+    assert client.session_id == 0
+    client.set_session_id(None)
+    assert client.session_id is None
+
+
+async def test_join_already_subscribed_is_noop(client: AquaControlClient) -> None:
+    """Joining a topic that's already in the rejoin set leaves topics unchanged."""
+    # client fixture subscribes to ALL_TOPICS by default; System is in there.
+    before = client.topics
+    await client.join("System")
+    assert client.topics == before
+
+
+async def test_leave_topic_removes_it(client: AquaControlClient) -> None:
+    """leave() drops a topic from the rejoin set."""
+    assert "Firmware" in client.topics  # initial state
+    await client.leave("Firmware")
+    assert "Firmware" not in client.topics
+
+
+async def test_listener_exception_isolated_from_other_handlers(
+    client: AquaControlClient,
+) -> None:
+    """A handler that raises does not kill dispatch to other handlers
+    (covers the exception branch in AquaControlClient._call against a
+    real device event stream)."""
+    good_seen: list[Event] = []
+
+    def bad_handler(e: Event) -> None:
+        # Only raise on a specific event type so other tests' handlers
+        # aren't affected.
+        if e.name == "System Info Values":
+            raise RuntimeError("intentional in test_listener_exception_isolated")
+
+    def good_handler(e: Event) -> None:
+        if e.name == "System Info Values":
+            good_seen.append(e)
+
+    rb = client.on_any(bad_handler)
+    rg = client.on_any(good_handler)
+    try:
+        # System Info Values fires at 1 Hz — 2.5 s captures a few.
+        await asyncio.sleep(2.5)
+    finally:
+        rb()
+        rg()
+    assert good_seen, "good handler should still have received events"
+
+
+async def test_fetch_session_cookies_against_closed_port_raises() -> None:
+    """Connecting to a closed port on the live device hits the
+    aiohttp.ClientError path → AquaControlConnectionError. Uses port 9
+    (discard) on the device — fast TCP refuse rather than timeout."""
+    from aquacontrol.exceptions import AquaControlConnectionError
+
+    with pytest.raises(AquaControlConnectionError):
+        await fetch_session_cookies(
+            _host(),
+            port=9,
+            username="x",
+            password="x",
+            timeout_s=3.0,
+        )
+
+
+async def test_fetch_session_cookies_with_supplied_session() -> None:
+    """When the caller passes a session, fetch_session_cookies reuses it
+    and does not close it."""
+    s = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True))
+    try:
+        cookies = await fetch_session_cookies(
+            _host(),
+            port=_rest_port(),
+            username=_username(),
+            password=_password(),
+            session=s,
+        )
+        assert cookies.get("ashly-sid")
+        # We didn't close it — should still work for a follow-up request.
+        async with s.get(f"http://{_host()}:{_rest_port()}/v1.0-beta/system/info"):
+            pass
+    finally:
+        await s.close()
+
+
+async def test_user_on_connect_and_on_disconnect_callbacks_fire() -> None:
+    """StreamConnection user callbacks (on_connect / on_disconnect) fire
+    on the corresponding lifecycle transitions."""
+    from aquacontrol.stream import StreamConnection
+
+    cookies = await fetch_session_cookies(
+        _host(),
+        port=_rest_port(),
+        username=_username(),
+        password=_password(),
+    )
+    from aquacontrol import cookie_header
+
+    connect_calls = []
+    disconnect_calls = []
+
+    async def on_connect():
+        connect_calls.append(True)
+
+    async def on_disconnect():
+        disconnect_calls.append(True)
+
+    stream = StreamConnection(
+        host=_host(),
+        port=8001,
+        topics=["System"],
+        cookie_header=cookie_header(cookies),
+        on_event=lambda _t, _p: None,
+        on_connect=on_connect,
+        on_disconnect=on_disconnect,
+    )
+    await stream.start()
+    try:
+        deadline = asyncio.get_running_loop().time() + 5.0
+        while not connect_calls:
+            if asyncio.get_running_loop().time() > deadline:
+                pytest.fail("on_connect did not fire within 5 s")
+            await asyncio.sleep(0.1)
+    finally:
+        await stream.stop()
+    # on_disconnect fires synchronously inside stop() as the socket closes.
+    # Give the event loop a tick to flush the callback.
+    await asyncio.sleep(0.2)
+    assert disconnect_calls, "on_disconnect was not called on stop()"
+
+
+async def test_stream_reconnect_loop_on_closed_port() -> None:
+    """Pointing at a closed port on the device exercises the reconnect
+    loop's error path. Closed-port TCP refuse fails fast (within ~100 ms)
+    so the loop can complete an iteration well inside the test timeout.
+
+    Covers the catch + log + backoff + retry branches in ``_run`` plus
+    ``socketio.ConnectionError`` → ``AquaControlConnectionError``
+    conversion in ``_connect_once`` — paths a healthy connection
+    never visits.
+    """
+    from aquacontrol.stream import StreamConnection
+
+    stream = StreamConnection(
+        host=_host(),
+        port=9,  # discard service; closed; refuses immediately
+        topics=[],
+        cookie_header=None,
+        on_event=lambda _t, _p: None,
+    )
+    await stream.start()
+    try:
+        # Closed port refuses fast; 3 s lets the loop iterate at least once.
+        await asyncio.sleep(3.0)
+    finally:
+        await stream.stop()
+    assert not stream.connected
+
+
+async def test_stream_start_is_idempotent_live() -> None:
+    """Calling start() twice doesn't kick off a second background task."""
+    from aquacontrol.stream import StreamConnection
+
+    stream = StreamConnection(
+        host=_host(),
+        port=9,  # closed — we don't actually care about connectivity
+        topics=[],
+        cookie_header=None,
+        on_event=lambda _t, _p: None,
+    )
+    await stream.start()
+    task1 = stream._task
+    await stream.start()
+    task2 = stream._task
+    try:
+        assert task1 is task2  # same background task
+    finally:
+        await stream.stop()
+
+
+async def test_stream_emit_when_never_connected_is_noop() -> None:
+    """emit() on a brand-new StreamConnection that's never been started
+    silently does nothing. Hits the early-return when ``_sio is None``."""
+    from aquacontrol.stream import StreamConnection
+
+    stream = StreamConnection(
+        host=_host(),
+        port=8001,
+        topics=[],
+        cookie_header=None,
+        on_event=lambda _t, _p: None,
+    )
+    # Never called .start() — _sio is None.
+    await stream.emit("join", "AnyTopic")  # must not raise
+    assert not stream.connected
+
+
+async def test_stream_raising_on_event_does_not_kill_dispatch() -> None:
+    """A raising on_event callback at the stream level is caught + logged.
+
+    AquaControlClient wraps user handlers in its own try/except, so this
+    branch is normally unreachable from the high-level API. To exercise
+    it we use StreamConnection directly with a sync raising callback.
+    """
+    from aquacontrol import cookie_header
+    from aquacontrol.stream import StreamConnection
+
+    cookies = await fetch_session_cookies(
+        _host(),
+        port=_rest_port(),
+        username=_username(),
+        password=_password(),
+    )
+    received_after_raise: list[tuple[str, object]] = []
+    call_count = {"n": 0}
+
+    def on_event(topic: str, payload: object) -> None:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("intentional raise from on_event")
+        received_after_raise.append((topic, payload))
+
+    stream = StreamConnection(
+        host=_host(),
+        port=8001,
+        topics=["System"],
+        cookie_header=cookie_header(cookies),
+        on_event=on_event,
+    )
+    await stream.start()
+    try:
+        # Wait for at least one event after the raise.
+        deadline = asyncio.get_running_loop().time() + 5.0
+        while not received_after_raise:
+            if asyncio.get_running_loop().time() > deadline:
+                pytest.fail("no events after the raising callback")
+            await asyncio.sleep(0.1)
+    finally:
+        await stream.stop()
+    assert call_count["n"] >= 2, "subsequent events should still reach on_event"
+
+
+async def test_emit_after_disconnect_is_silent_noop(client: AquaControlClient) -> None:
+    """Calling client.join() after disconnect() doesn't raise; the underlying
+    emit hits the 'sio is None / not connected' early-return."""
+    await client.disconnect()
+    # join() proceeds to call stream.emit(), which finds no live socket
+    # and returns silently. Add a brand-new topic to ensure we hit the
+    # 'topic not in self._topics' branch first.
+    await client.join("FreshTopicNotInDefault")
+    # No exception means we passed.
+
+
+def test_next_backoff_callable_from_application_code() -> None:
+    """``_next_backoff`` is private but reachable for callers that want to
+    mirror the library's backoff schedule. Exercising it here also gives
+    the live suite coverage on a function the runtime loop calls
+    transparently."""
+    from aquacontrol.stream import _next_backoff
+
+    for current in (0.1, 1.0, 5.0, 30.0, 100.0):
+        v = _next_backoff(current)
+        assert 1.0 <= v <= 30.0
+
+
+async def test_async_handler_is_awaited(client: AquaControlClient) -> None:
+    """An async listener returns a coroutine, which the client must await.
+
+    The sync-listener tests above hit handler invocation but not the
+    ``await result`` branch in ``_call``; this test exercises both.
+    """
+    seen: list[Event] = []
+
+    async def async_handler(event: Event) -> None:
+        # Yield once to prove the coroutine is actually scheduled / awaited.
+        await asyncio.sleep(0)
+        if event.name == "System Info Values":
+            seen.append(event)
+
+    remove = client.on_any(async_handler)
+    try:
+        await asyncio.sleep(2.0)  # System Info Values arrives at 1 Hz
+    finally:
+        remove()
+    assert seen, "async handler did not receive any events"
+
+
+async def test_fetch_session_cookies_timeout_path() -> None:
+    """Pointing at a host that drops packets silently produces a timeout
+    (rather than a connection refusal), exercising the
+    ``asyncio.TimeoutError`` → ``AquaControlTimeoutError`` branch.
+
+    Uses TEST-NET-1 (RFC 5737) with a 1.5 s budget."""
+    from aquacontrol.exceptions import AquaControlTimeoutError
+
+    with pytest.raises(AquaControlTimeoutError):
+        await fetch_session_cookies(
+            "192.0.2.1",
+            port=8000,
+            username="x",
+            password="x",
+            timeout_s=1.5,
+        )
