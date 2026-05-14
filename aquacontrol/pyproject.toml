@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aquacontrol"
+version = "0.1.0"
+description = "Async Python client for the Ashly AquaControl Socket.IO push API."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Limecooler" }]
+keywords = ["ashly", "aquacontrol", "aqm1208", "aqm408", "audio", "socketio"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Framework :: AsyncIO",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Home Automation",
+  "Topic :: Multimedia :: Sound/Audio",
+]
+dependencies = [
+  "aiohttp>=3.9",
+  "python-socketio[asyncio_client]>=5.10",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.24",
+  "aioresponses>=0.7",
+  "mypy>=1.10",
+  "ruff>=0.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/limecooler/ha-ashly-aqm"
+Repository = "https://github.com/limecooler/ha-ashly-aqm"
+"Protocol reference" = "https://github.com/limecooler/ha-ashly-aqm/blob/main/docs/WEBSOCKET-API.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+aquacontrol = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# The shared dev environment installs pytest_homeassistant_custom_component
+# for the HA integration's tests. That plugin's verify_cleanup fixture
+# assumes an HA-style test layout (an `hass` fixture, HA-managed sessions);
+# applied to this stand-alone library it fails teardown when aiohttp
+# spawns its safe-shutdown thread. The plugin is HA-specific and we don't
+# need any of its fixtures here, so disable it for this package.
+addopts = "-p no:homeassistant"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src/aquacontrol"]
+
+[[tool.mypy.overrides]]
+module = "socketio.*"
+ignore_missing_imports = true
