@@ -4,6 +4,15 @@ All notable changes to this integration are documented here. Versioning loosely
 follows [Semantic Versioning](https://semver.org/) with the caveat that the
 `<major>.<minor>.<patch>` field also drives HA's HACS update notifications.
 
+## 0.7.2 — 2026-05-14
+
+- **New diagnostic sensor: IP address.** Surfaces the device's configured
+  IP (or hostname) on the device card immediately below the device-info
+  area, so you don't have to click into the configuration URL to see
+  what HA is talking to. Enabled by default. Stays available even when
+  the device is offline (useful for troubleshooting "the IP I should be
+  reaching"), and auto-updates if the entry is reconfigured.
+
 ## 0.7.1 — 2026-05-14
 
 **Hotfix** for a ship-blocker spotted by a user immediately after the 0.7.0

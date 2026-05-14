@@ -153,6 +153,9 @@
       "last_recalled_preset": {
         "name": "Last recalled preset"
       },
+      "ip_address": {
+        "name": "IP address"
+      },
       "input_meter": {
         "name": "Input {channel_number} level"
       },

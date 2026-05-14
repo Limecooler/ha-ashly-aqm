@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from custom_components.ashly.sensor import (
     AshlyChannelMeterSensor,
     AshlyFirmwareSensor,
+    AshlyIPAddressSensor,
     AshlyLastRecalledPresetSensor,
     AshlyPresetCountSensor,
 )
@@ -15,6 +16,20 @@ from custom_components.ashly.sensor import (
 async def test_firmware_sensor_value(mock_coordinator):
     s = AshlyFirmwareSensor(mock_coordinator)
     assert s.native_value == "1.1.8"
+
+
+async def test_ip_address_sensor_value(mock_coordinator):
+    """IP address sensor reflects the coordinator's client.host."""
+    mock_coordinator.client.host = "192.168.1.100"
+    s = AshlyIPAddressSensor(mock_coordinator)
+    assert s.native_value == "192.168.1.100"
+
+
+async def test_ip_address_sensor_always_available(mock_coordinator):
+    """IP sensor stays available even when the coordinator's poll fails."""
+    mock_coordinator.last_update_success = False
+    s = AshlyIPAddressSensor(mock_coordinator)
+    assert s.available is True
 
 
 async def test_preset_count_sensor_value(mock_coordinator):
@@ -37,7 +52,7 @@ async def test_last_recalled_sensor_none(mock_coordinator):
 async def test_async_setup_entry_registers_all_sensors(
     hass, mock_config_entry, mock_coordinator, mock_meter_client
 ):
-    """3 diagnostic sensors + 12 input meters + 12 mixer-input meters = 27."""
+    """4 diagnostic sensors + 12 input meters + 12 mixer-input meters = 28."""
     from custom_components.ashly import sensor
 
     mock_config_entry.runtime_data = type(
@@ -51,7 +66,7 @@ async def test_async_setup_entry_registers_all_sensors(
     )()
     added = []
     await sensor.async_setup_entry(hass, mock_config_entry, lambda x: added.extend(x))
-    assert len(added) == 3 + 12 + 12
+    assert len(added) == 4 + 12 + 12
 
 
 async def test_meter_sensor_input_index(mock_coordinator, mock_meter_client):

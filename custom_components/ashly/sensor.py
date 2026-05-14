@@ -39,6 +39,7 @@ async def async_setup_entry(
         AshlyFirmwareSensor(coordinator),
         AshlyPresetCountSensor(coordinator),
         AshlyLastRecalledPresetSensor(coordinator),
+        AshlyIPAddressSensor(coordinator),
     ]
     # 12 input + 12 mixer-input meters. All disabled by default — they
     # update at ~1 Hz and would otherwise clutter the recorder.
@@ -166,6 +167,37 @@ class AshlyLastRecalledPresetSensor(AshlyEntity, RestoreEntity, SensorEntity):
         if data is None:
             return {}
         return {"modified": data.last_recalled_preset.modified}
+
+
+class AshlyIPAddressSensor(AshlyEntity, SensorEntity):
+    """The device's IP address (or hostname) as configured in HA.
+
+    Surfaced as a diagnostic sensor so the IP shows up immediately below the
+    device-info area without needing to click into the configuration URL.
+    Tracks the entry's stored host so it auto-updates if the user
+    reconfigures the integration after a DHCP-induced IP change.
+    """
+
+    def __init__(self, coordinator: AshlyCoordinator) -> None:
+        super().__init__(
+            coordinator,
+            AshlySensorEntityDescription(
+                key="ip_address",
+                translation_key="ip_address",
+                entity_category=EntityCategory.DIAGNOSTIC,
+            ),
+        )
+
+    @property
+    def native_value(self) -> str:
+        return self.coordinator.client.host
+
+    @property
+    def available(self) -> bool:
+        # The IP comes from the config entry, not from a coordinator poll,
+        # so this stays available even while the device is unreachable —
+        # useful for "the IP I should be reaching" troubleshooting.
+        return True
 
 
 # ── Live signal meters (per input / mixer-input channel) ───────────────

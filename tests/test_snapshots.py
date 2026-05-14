@@ -118,14 +118,19 @@ async def test_sensor_platform_entity_keys(
     )()
     added: list = []
     await sensor.async_setup_entry(hass, mock_config_entry, lambda x: added.extend(x))
-    # 3 diagnostic + 12 input meters + 12 mixer meters.
-    assert len(added) == 3 + 12 + 12
+    # 4 diagnostic (firmware, preset_count, last_recalled, ip_address)
+    # + 12 input meters + 12 mixer meters.
+    assert len(added) == 4 + 12 + 12
     keys = {_key(e) for e in added}
     assert "firmware_version" in keys
     assert "preset_count" in keys
     assert "last_recalled_preset" in keys
+    assert "ip_address" in keys
     assert "meter_input_1" in keys
     assert "meter_mixer_12" in keys
-    # All meter sensors and firmware/preset_count are disabled by default.
+    # IP address and last_recalled_preset are the only sensors enabled by
+    # default; the rest (meters + firmware/preset_count) are disabled so a
+    # fresh install doesn't get 26 entities cluttering the device card.
     disabled = {_key(e) for e in added if not _enabled_default(e)}
-    assert "last_recalled_preset" not in disabled  # the only one enabled by default
+    assert "last_recalled_preset" not in disabled
+    assert "ip_address" not in disabled
