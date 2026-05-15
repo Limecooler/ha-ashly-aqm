@@ -167,10 +167,19 @@ class AquaControlClient:
         so long-running deployments survive the device rotating session
         cookies (e.g. across reboots) without manual reauth.
 
+        Calling ``connect()`` while already connected is a no-op — the
+        existing stream's reconnect loop continues to run. This makes
+        the method safe to call from idempotent setup paths (e.g. HA's
+        ``async_setup_entry`` after a reload).
+
         Returns once the background task has been started — does NOT wait
         for the first WebSocket connection. Poll :attr:`connected` if
         you need to know.
         """
+        if self._stream is not None:
+            # Already started; don't orphan the existing task by overwriting
+            # self._stream with a fresh StreamConnection.
+            return
         # Validate credentials up-front so callers can fail-fast on bad
         # creds rather than discover the failure asynchronously inside
         # the reconnect loop. AquaControlAuthError surfaces here.

@@ -405,3 +405,15 @@ async def test_async_handler_timeout_logged_not_propagated(caplog):
         assert any("exceeded" in r.message for r in caplog.records)
     finally:
         client_mod._HANDLER_TIMEOUT_S = _real_timeout
+
+
+async def test_connect_is_idempotent(patch_auth, patch_stream):
+    """Calling connect() while already connected is a no-op — the second
+    call does NOT create a new StreamConnection."""
+    MockStream, stream = patch_stream
+    client = AquaControlClient(host="x", username="u", password="p")
+    await client.connect()
+    assert MockStream.call_count == 1
+    await client.connect()  # second call
+    assert MockStream.call_count == 1  # still one stream
+    stream.start.assert_awaited_once()

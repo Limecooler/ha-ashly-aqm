@@ -361,3 +361,43 @@ def test_parse_event_strict_passes_well_formed():
         strict=True,
     )
     assert event.name == "Set Chain Mute"
+
+
+# ── raw_truncated ──────────────────────────────────────────────────────
+
+
+def test_raw_truncated_returns_full_repr_under_budget():
+    event = parse_event(SYSTEM, {"name": "X", "data": [], "uniqueId": "s"})
+    out = event.raw_truncated(max_bytes=1024)
+    # Small payload — no truncation marker.
+    assert "truncated" not in out
+    assert "X" in out
+
+
+def test_raw_truncated_clips_oversized_payloads():
+    huge_records = [{"x": "a" * 5000}] * 100
+    payload = {
+        "name": "Preset Recall",
+        "data": [{"api": "/x", "records": huge_records, "type": "new"}],
+        "uniqueId": "s",
+    }
+    event = parse_event("Preset", payload)
+    out = event.raw_truncated(max_bytes=200)
+    assert len(out) < 1000  # 200 + suffix
+    assert "truncated" in out
+    # Suffix includes the dropped-byte count
+    import re
+
+    assert re.search(r"\+\d+ bytes truncated", out)
+
+
+def test_raw_truncated_default_budget_is_1024():
+    """Default max_bytes value is documented as 1024."""
+    huge = {
+        "name": "X",
+        "data": [{"api": "/x", "records": [{"k": "a" * 5000}], "type": "new"}],
+        "uniqueId": "s",
+    }
+    event = parse_event(SYSTEM, huge)
+    out = event.raw_truncated()  # default
+    assert "truncated" in out

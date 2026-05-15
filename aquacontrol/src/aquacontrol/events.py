@@ -104,6 +104,25 @@ class Event:
         """``type`` of the single operation, or ``None`` for multi-op events."""
         return self.operations[0].type if len(self.operations) == 1 else None
 
+    def raw_truncated(self, max_bytes: int = 1024) -> str:
+        """Return a `repr` of :attr:`raw`, truncated to ``max_bytes``.
+
+        Safe for use in logs — the raw payload from the wire can be
+        arbitrarily large (a ``Preset Recall`` middle packet routinely
+        runs ~400 kB). Use this in place of ``repr(event.raw)`` or
+        ``json.dumps(event.raw)`` when emitting diagnostic output you
+        don't want to flood a log file or a recorder DB.
+
+        The truncation suffix indicates how many bytes were dropped::
+
+            "{ ...payload start... }... (+412300 bytes truncated)"
+        """
+        s = repr(self.raw)
+        if len(s) <= max_bytes:
+            return s
+        dropped = len(s) - max_bytes
+        return f"{s[:max_bytes]}... (+{dropped} bytes truncated)"
+
     @property
     def is_single_operation(self) -> bool:
         """True if this event has exactly one operation in ``data``.
