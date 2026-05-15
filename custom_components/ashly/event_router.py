@@ -29,8 +29,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:  # pragma: no cover
-    from aquacontrol import Event
-
+    from ._aquacontrol import Event
     from .coordinator import AshlyDeviceData
 
 _LOGGER = logging.getLogger(__name__)

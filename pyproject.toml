@@ -1,6 +1,6 @@
 [project]
 name = "ha-ashly-aqm"
-version = "0.8.0"
+version = "0.8.1"
 description = "Home Assistant integration for Ashly Audio AQM-series zone mixers (AQM1208, AQM408) via the AquaControl REST API + socket.io live-meter stream."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -31,6 +31,16 @@ markers = [
 ]
 # Exclude integration tests by default; opt in with `-m integration`.
 addopts = "-m 'not integration'"
+
+[tool.coverage.run]
+# custom_components/ashly/_aquacontrol/ is a vendored copy of the
+# standalone aquacontrol library (kept in-tree at aquacontrol/ as the
+# dev source of truth). The standalone library has its own 100% offline
+# test suite at aquacontrol/tests/ — vendoring here is for HACS runtime
+# only. Excluding from integration coverage avoids reporting gaps that
+# would force us to duplicate the library's tests under the integration's
+# test tree.
+omit = ["custom_components/ashly/_aquacontrol/*"]
 
 [tool.ruff]
 target-version = "py312"

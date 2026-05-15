@@ -4,6 +4,32 @@ All notable changes to this integration are documented here. Versioning loosely
 follows [Semantic Versioning](https://semver.org/) with the caveat that the
 `<major>.<minor>.<patch>` field also drives HA's HACS update notifications.
 
+## 0.8.1 — 2026-05-15
+
+**Hotfix** for a packaging miss in 0.8.0 that broke HACS upgrades:
+
+```
+Setup failed for custom integration 'ashly':
+Requirements for ashly not found: ['aquacontrol==0.2.1'].
+```
+
+The `aquacontrol` push-protocol library was declared as a `pip` requirement
+in the integration's manifest, but the library lives in this repo only —
+not on PyPI. HACS ships `custom_components/ashly/` and nothing else, so
+HA's runtime requirement-install couldn't resolve the package.
+
+Fix: the library is now **vendored inside the integration** at
+`custom_components/ashly/_aquacontrol/`, and the manifest no longer
+references it. The standalone `aquacontrol/` source tree stays in the
+repo as the dev source of truth (and remains 100% test-covered); the
+runtime path is the vendored copy.
+
+No functional change to push behaviour. All 532 offline tests still pass
+at 100 % coverage; 43 live tests still pass against a real AQM1208.
+
+If you upgraded to 0.8.0 and the integration is stuck in `setup_error`,
+update to 0.8.1 via HACS and reload the integration — no reconfigure needed.
+
 ## 0.8.0 — 2026-05-15
 
 **Hybrid push + poll.** State changes (mutes, levels, gains, phantom power,

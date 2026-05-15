@@ -11,9 +11,9 @@ from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from aquacontrol._testing import SAMPLE_EVENTS
 
-from aquacontrol import parse_event
+from custom_components.ashly._aquacontrol import parse_event
+from custom_components.ashly._aquacontrol._testing import SAMPLE_EVENTS
 from custom_components.ashly.event_router import ROUTABLE_EVENT_NAMES
 from custom_components.ashly.push import AshlyPushClient, PushStats
 

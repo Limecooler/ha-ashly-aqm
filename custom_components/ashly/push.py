@@ -31,13 +31,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import aiohttp
-from aquacontrol.topics import PRESET
 
-from aquacontrol import (
-    AquaControlClient,
-    Event,
-)
-
+from ._aquacontrol import AquaControlClient, Event
+from ._aquacontrol.topics import PRESET
 from .event_router import ROUTABLE_EVENT_NAMES, _NoChange, route_event
 
 if TYPE_CHECKING:  # pragma: no cover

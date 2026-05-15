@@ -16,9 +16,9 @@ import dataclasses
 from typing import Any
 
 import pytest
-from aquacontrol._testing import SAMPLE_EVENTS
 
-from aquacontrol import parse_event
+from custom_components.ashly._aquacontrol import parse_event
+from custom_components.ashly._aquacontrol._testing import SAMPLE_EVENTS
 from custom_components.ashly.coordinator import AshlyDeviceData
 from custom_components.ashly.event_router import (
     NO_CHANGE,
