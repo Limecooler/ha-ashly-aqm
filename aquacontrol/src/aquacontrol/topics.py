@@ -49,6 +49,14 @@ FIRMWARE: Final = "Firmware"
 SECURITY: Final = "Security"
 
 
+# NOTE: When the device firmware adds a new topic or event name, update:
+#   * the topic constant + ALL_TOPICS tuple below
+#   * is_ambient()'s _AMBIENT_PAIRS set (if it's a heartbeat)
+#   * is_meter()'s _METER_PAIRS set (if it carries audio meter data)
+#   * docs/WEBSOCKET-API.md and the README event tables
+# There is no auto-discovery: this list is the authoritative subscription
+# set, and consumers will not see events on topics absent from it.
+
 #: All known topics. Subscribing to every entry is the default behaviour
 #: of :class:`aquacontrol.AquaControlClient` so consumers receive every
 #: emitted event without having to enumerate.

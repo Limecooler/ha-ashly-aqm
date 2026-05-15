@@ -176,3 +176,54 @@ async def test_read_body_safely_returns_placeholder_on_clienterror():
     resp = MagicMock()
     resp.text = AsyncMock(side_effect=aiohttp.ClientError("decode failure"))
     assert await _read_body_safely(resp) == "<body unreadable>"
+
+
+def test_looks_like_private_address():
+    """The cleartext-HTTP warning fires for public IPs and DNS names, not
+    for RFC 1918 / loopback / IPv6 unique-local addresses."""
+    from aquacontrol.auth import _looks_like_private_address
+
+    # Private — no warning
+    assert _looks_like_private_address("127.0.0.1")
+    assert _looks_like_private_address("localhost")
+    assert _looks_like_private_address("192.168.1.50")
+    assert _looks_like_private_address("10.0.0.1")
+    assert _looks_like_private_address("172.16.0.1")
+    assert _looks_like_private_address("172.31.255.254")
+    assert _looks_like_private_address("fc00::1")
+    assert _looks_like_private_address("fd12:3456::1")
+
+    # Public / unknown — warn
+    assert not _looks_like_private_address("8.8.8.8")
+    assert not _looks_like_private_address("my-aqm.example.com")
+    assert not _looks_like_private_address("172.32.0.1")  # outside 16-31 block
+
+
+async def test_warning_logged_for_non_private_host(caplog):
+    """Connecting to a non-private host emits a security warning."""
+    import logging
+
+    with aioresponses() as m, caplog.at_level(logging.WARNING):
+        m.post(
+            "http://aqm.example.com:8000/v1.0-beta/session/login",
+            status=200,
+            payload={"success": True},
+            headers={"Set-Cookie": "ashly-sid=x"},
+        )
+        await fetch_session_cookies("aqm.example.com", username="u", password="p")
+    assert any("cleartext HTTP" in r.message for r in caplog.records)
+
+
+async def test_no_warning_for_private_host(caplog):
+    """Connecting to a private host does NOT emit the cleartext warning."""
+    import logging
+
+    with aioresponses() as m, caplog.at_level(logging.WARNING):
+        m.post(
+            "http://192.168.1.50:8000/v1.0-beta/session/login",
+            status=200,
+            payload={"success": True},
+            headers={"Set-Cookie": "ashly-sid=x"},
+        )
+        await fetch_session_cookies("192.168.1.50", username="u", password="p")
+    assert not any("cleartext HTTP" in r.message for r in caplog.records)

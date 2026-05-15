@@ -14,9 +14,20 @@ Typical usage::
         client.on_any(log_everything)
         await asyncio.sleep(3600)  # listen for an hour
 
-The client handles authentication, topic subscription, reconnection, and
-event parsing. Consumers receive :class:`aquacontrol.Event` instances and
-are responsible for mapping records → application state.
+The client handles authentication (with re-auth on reconnect), topic
+subscription, reconnection, and event parsing. Consumers receive
+:class:`aquacontrol.Event` instances and are responsible for mapping
+records → application state.
+
+Listener registration supports both direct and decorator forms::
+
+    # Direct — returns an Unsubscribe callable
+    unsub = client.on_event("Set Chain Mute", handler)
+    unsub()
+
+    # Decorator — handler stays registered for the client's lifetime
+    @client.listen(name="Set Chain Mute")
+    async def handler(event): ...
 """
 
 from __future__ import annotations
@@ -24,7 +35,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Iterable
-from typing import Any, Self, cast
+from typing import Any, Self
+
+import aiohttp
 
 from . import topics as topics_mod
 from .auth import cookie_header as _cookie_header
@@ -34,16 +47,23 @@ from .stream import StreamConnection
 
 _LOGGER = logging.getLogger(__name__)
 
-#: Listener signature. May be sync or async; sync handlers are awaited via
-#: ``asyncio.iscoroutine``.
+#: A listener callback. May be **sync** (returns ``None``) or **async**
+#: (returns an ``Awaitable[None]`` that the client awaits). Async
+#: handlers are bounded by :data:`_HANDLER_TIMEOUT_S` so a hung handler
+#: cannot stall dispatch indefinitely.
 EventHandler = Callable[[Event], Awaitable[None] | None]
 
-#: Cancellation token returned by every ``on_*`` registration call. Call it
-#: to remove the listener; idempotent.
+#: Returned by every ``on_*`` registration. Calling it removes the
+#: listener. Idempotent — safe to call multiple times.
 Unsubscribe = Callable[[], None]
 
 _DEFAULT_REST_PORT = 8000
 _DEFAULT_WS_PORT = 8001
+
+# How long to wait for a single async handler to finish before logging a
+# warning and moving on. Prevents one hung listener from stalling the
+# rest of the dispatch chain for the same event.
+_HANDLER_TIMEOUT_S = 5.0
 
 
 class AquaControlClient:
@@ -60,6 +80,13 @@ class AquaControlClient:
     - ``topics`` — which topics to subscribe to. Default: every known
       topic (see :data:`aquacontrol.topics.ALL_TOPICS`). Pass an empty
       sequence to subscribe to nothing.
+    - ``session`` — optional :class:`aiohttp.ClientSession` to reuse for
+      REST authentication. Pass one for connection-pool sharing with an
+      existing REST client; leave as ``None`` to let the library open a
+      one-shot session per login.
+    - ``logger`` — optional logger. Pass a child of your application's
+      logger (e.g. ``logging.getLogger("my_app").getChild("aquacontrol")``)
+      so library logs show up under your namespace.
     """
 
     def __init__(
@@ -71,6 +98,7 @@ class AquaControlClient:
         rest_port: int = _DEFAULT_REST_PORT,
         ws_port: int = _DEFAULT_WS_PORT,
         topics: Iterable[str] | None = None,
+        session: aiohttp.ClientSession | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._host = host
@@ -81,6 +109,7 @@ class AquaControlClient:
         self._topics: tuple[str, ...] = (
             tuple(topics) if topics is not None else topics_mod.ALL_TOPICS
         )
+        self._session = session
         self._log = logger or _LOGGER
 
         # Listener registries. Each handler ID is a unique int so removing
@@ -91,8 +120,9 @@ class AquaControlClient:
         self._any_listeners: dict[int, EventHandler] = {}
 
         self._stream: StreamConnection | None = None
-        #: Resolved on the first echo we observe of one of our own emits.
-        #: Used to filter own-echoes via :meth:`Event.is_from_session`.
+        #: Set explicitly via :meth:`set_session_id`. Used by
+        #: :meth:`is_own_event` to filter echoes of mutations this client
+        #: triggered (when the caller knows its session UUID).
         self._session_id: str | int | None = None
 
     # ── Properties ────────────────────────────────────────────────
@@ -107,11 +137,11 @@ class AquaControlClient:
 
     @property
     def session_id(self) -> str | int | None:
-        """The originating-session UUID for events triggered by this client.
+        """The session ID assigned via :meth:`set_session_id`, or ``None``
+        if the caller hasn't supplied one.
 
-        ``None`` until the device echoes one of our own mutations back to
-        us. Consumers using optimistic state updates should pass this to
-        :meth:`Event.is_from_session` to suppress double-application.
+        Use :meth:`is_own_event` for the common case of suppressing
+        own-echoes during optimistic updates.
         """
         return self._session_id
 
@@ -131,22 +161,25 @@ class AquaControlClient:
     async def connect(self) -> None:
         """Authenticate, open the WebSocket, and start the reconnect loop.
 
+        Performs an initial authentication so callers fail fast on bad
+        credentials. The same credentials are re-used on every subsequent
+        reconnect via the cookie-provider callback wired into the stream,
+        so long-running deployments survive the device rotating session
+        cookies (e.g. across reboots) without manual reauth.
+
         Returns once the background task has been started — does NOT wait
-        for the first successful connection. Consumers can poll
-        :attr:`connected` if they need to know.
+        for the first WebSocket connection. Poll :attr:`connected` if
+        you need to know.
         """
-        cookies = await fetch_session_cookies(
-            self._host,
-            port=self._rest_port,
-            username=self._username,
-            password=self._password,
-        )
-        header = _cookie_header(cookies)
+        # Validate credentials up-front so callers can fail-fast on bad
+        # creds rather than discover the failure asynchronously inside
+        # the reconnect loop. AquaControlAuthError surfaces here.
+        await self._cookie_provider()
         self._stream = StreamConnection(
             host=self._host,
             port=self._ws_port,
             topics=self._topics,
-            cookie_header=header,
+            cookie_provider=self._cookie_provider,
             on_event=self._on_raw_event,
             logger=self._log,
         )
@@ -158,6 +191,22 @@ class AquaControlClient:
         self._stream = None
         if stream is not None:
             await stream.stop()
+
+    async def _cookie_provider(self) -> str:
+        """Re-authenticate and return a fresh ``Cookie:`` header.
+
+        Invoked by :class:`StreamConnection` before each connect attempt.
+        Uses the supplied :class:`aiohttp.ClientSession` (if any) for
+        connection-pool reuse.
+        """
+        cookies = await fetch_session_cookies(
+            self._host,
+            port=self._rest_port,
+            username=self._username,
+            password=self._password,
+            session=self._session,
+        )
+        return _cookie_header(cookies)
 
     # ── Listener registration ─────────────────────────────────────
 
@@ -183,6 +232,47 @@ class AquaControlClient:
         """
         return self._register(self._any_listeners, handler)
 
+    def listen(
+        self,
+        *,
+        name: str | None = None,
+        topic: str | None = None,
+    ) -> Callable[[EventHandler], EventHandler]:
+        """Decorator-friendly listener registration.
+
+        Returns a decorator that registers the wrapped function and
+        returns it unchanged. Unlike :meth:`on_event` / :meth:`on_topic`
+        / :meth:`on_any`, the caller gets the original function back
+        (not an :data:`Unsubscribe` callable), making the result usable
+        as a Python decorator::
+
+            @client.listen(name="Set Chain Mute")
+            async def handle_mute(event): ...
+
+            @client.listen(topic="Preset")
+            async def handle_preset(event): ...
+
+            @client.listen()  # catch-all
+            async def handle_any(event): ...
+
+        Trade-off: decorator-registered handlers can't be unsubscribed
+        explicitly — they live for the lifetime of the client. Use the
+        direct ``on_*`` methods when you need an :data:`Unsubscribe`.
+        """
+        if name is not None and topic is not None:
+            raise ValueError("listen(): pass at most one of name or topic")
+
+        def _decorator(handler: EventHandler) -> EventHandler:
+            if name is not None:
+                self._register(self._event_listeners, (name, handler))
+            elif topic is not None:
+                self._register(self._topic_listeners, (topic, handler))
+            else:
+                self._register(self._any_listeners, handler)
+            return handler
+
+        return _decorator
+
     def _register(
         self,
         registry: dict[int, Any],
@@ -203,11 +293,11 @@ class AquaControlClient:
         """Fan a raw event out to all registered listeners.
 
         Called by :class:`StreamConnection` for every event we receive on
-        the patched ``_trigger_event``. Builds an :class:`Event`, records
-        our own session ID if this is the first echo of our work, and
+        the patched ``_trigger_event``. Builds an :class:`Event` and
         dispatches to listeners in this order: any-listeners, then
-        topic-listeners, then event-name-listeners. Exceptions in one
-        listener don't propagate to others.
+        topic-listeners, then event-name-listeners. Each handler runs
+        under a bounded timeout; one handler hanging does not block the
+        rest of the dispatch chain or kill the stream.
         """
         event = parse_event(topic, payload)
         await self._dispatch(event)
@@ -226,27 +316,60 @@ class AquaControlClient:
                 await self._call(handler, event)
 
     async def _call(self, handler: EventHandler, event: Event) -> None:
+        """Invoke one listener under a bounded timeout.
+
+        Sync handlers run inline. Async handlers are awaited with
+        :func:`asyncio.wait_for` so a single misbehaving listener can't
+        stall the dispatch chain forever. The handler's exception (and
+        timeout) are caught and logged.
+        """
         try:
             result = handler(event)
             if asyncio.iscoroutine(result):
-                await result
+                await asyncio.wait_for(result, timeout=_HANDLER_TIMEOUT_S)
+        except TimeoutError:
+            self._log.warning(
+                "AquaControl listener for %s/%s exceeded %.1fs — handler hung",
+                event.topic,
+                event.name,
+                _HANDLER_TIMEOUT_S,
+            )
         except Exception:
             self._log.exception(
                 "AquaControl listener raised for %s/%s", event.topic, event.name
             )
 
-    # ── Session-id management ─────────────────────────────────────
+    # ── Session-id management + echo filtering ────────────────────
 
     def set_session_id(self, session_id: str | int | None) -> None:
         """Pin the client's own session ID for echo filtering.
 
-        Consumers that already know their REST session UUID (e.g. from a
-        ``Set-Cookie`` header on login, or from the response body of the
-        first mutation they triggered) should call this to enable
-        :meth:`Event.is_from_session` immediately. Otherwise the client
-        will infer it lazily from the first state-change echo it sees.
+        Consumers that know their REST session UUID (e.g. from a
+        ``Set-Cookie`` header on login, or from the ``uniqueId`` field
+        of the first mutation they triggered) should call this and then
+        use :meth:`is_own_event` to suppress double-application of
+        optimistic updates.
         """
         self._session_id = session_id
+
+    def is_own_event(self, event: Event) -> bool:
+        """Return True if ``event`` was emitted in response to a mutation
+        triggered by this client's session.
+
+        Always False until :meth:`set_session_id` has been called.
+        Wraps :meth:`Event.is_from_session` with the client's pinned ID
+        so callers don't have to thread the session ID through every
+        listener::
+
+            client.set_session_id(my_uuid)
+
+            @client.listen(name="Set Chain Mute")
+            async def handle(event):
+                if client.is_own_event(event):
+                    return  # already applied optimistically
+                apply_to_state(event)
+        """
+        return event.is_from_session(self._session_id)
 
     # ── Manual topic management (advanced) ────────────────────────
 
@@ -280,8 +403,4 @@ class AquaControlClient:
         )
 
 
-# Re-export for explicit callable typing on the public surface.
 __all__ = ["AquaControlClient", "EventHandler", "Unsubscribe"]
-
-# Avoid an unused-import warning when type-checking.
-_ = cast

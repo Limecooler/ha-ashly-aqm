@@ -519,3 +519,103 @@ async def test_topic_join_failure_logged_not_propagated(caplog):
     # Loop didn't stop on A's failure — B still attempted.
     sio = captured_sio[0]
     assert sio.emit.await_count == 2  # both A and B were tried
+
+
+# ── cookie provider ────────────────────────────────────────────────────
+
+
+async def test_cookie_provider_invoked_per_connect_attempt():
+    """A cookie_provider is awaited before each connect so reconnects
+    pick up freshly issued cookies."""
+    call_count = {"n": 0}
+
+    async def provider() -> str:
+        call_count["n"] += 1
+        return f"ashly-sid=token-{call_count['n']}"
+
+    on_event = AsyncMock()
+    conn = StreamConnection(
+        host="x",
+        port=8001,
+        topics=["System"],
+        cookie_provider=provider,
+        on_event=on_event,
+    )
+
+    captured: dict = {}
+
+    with patch("aquacontrol.stream.socketio.AsyncClient", _make_fake_sio(captured)):
+        await conn._connect_once()
+
+    assert call_count["n"] == 1
+    assert captured["headers"] == {"Cookie": "ashly-sid=token-1"}
+
+
+async def test_static_cookie_header_used_when_no_provider():
+    """Legacy ``cookie_header=`` still works."""
+    on_event = AsyncMock()
+    conn = StreamConnection(
+        host="x",
+        port=8001,
+        topics=[],
+        cookie_header="ashly-sid=static",
+        on_event=on_event,
+    )
+    captured: dict = {}
+    with patch("aquacontrol.stream.socketio.AsyncClient", _make_fake_sio(captured)):
+        await conn._connect_once()
+    assert captured["headers"] == {"Cookie": "ashly-sid=static"}
+
+
+async def test_cookie_provider_takes_precedence_over_static_header():
+    async def provider() -> str:
+        return "from-provider"
+
+    conn = StreamConnection(
+        host="x",
+        port=8001,
+        topics=[],
+        cookie_header="from-static",
+        cookie_provider=provider,
+        on_event=AsyncMock(),
+    )
+    captured: dict = {}
+    with patch("aquacontrol.stream.socketio.AsyncClient", _make_fake_sio(captured)):
+        await conn._connect_once()
+    assert captured["headers"] == {"Cookie": "from-provider"}
+
+
+# ── protocol-error guard on incompatible socketio ─────────────────────
+
+
+async def test_protocol_error_when_trigger_event_hook_missing():
+    """If the installed socketio is missing the private _trigger_event
+    attribute, we raise AquaControlProtocolError(transient=False) rather
+    than crashing later with a confusing AttributeError."""
+    from aquacontrol.exceptions import AquaControlProtocolError
+
+    conn = StreamConnection(
+        host="x", port=8001, topics=[], cookie_header=None, on_event=AsyncMock()
+    )
+
+    class IncompatibleSio:
+        """Missing _trigger_event entirely (simulating a 6.x rename)."""
+
+    with pytest.raises(AquaControlProtocolError, match="incompatible"):
+        conn._install_trigger_patch(IncompatibleSio())  # type: ignore[arg-type]
+
+
+# ── _next_backoff rng injection ────────────────────────────────────────
+
+
+def test_next_backoff_accepts_per_instance_rng():
+    """Passing an RNG seeds the jitter; same seed → same value."""
+    import random as _r
+
+    from aquacontrol.stream import _next_backoff
+
+    rng1 = _r.Random(42)
+    rng2 = _r.Random(42)
+    a = _next_backoff(2.0, rng=rng1)
+    b = _next_backoff(2.0, rng=rng2)
+    assert a == b

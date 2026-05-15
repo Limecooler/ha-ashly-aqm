@@ -2,18 +2,27 @@
 
 Wraps ``socketio.AsyncClient`` with the AquaControl-specific bits:
 
-- carries an authentication cookie in the WebSocket handshake (required
-  to receive state-change events; see docs/WEBSOCKET-API.md §1.1),
+- carries an authentication cookie (or a re-authentication callback) in
+  the WebSocket handshake,
 - joins every requested topic on (re)connect,
 - patches ``_trigger_event`` so we receive *all* topics rather than
   having to register a Python-level ``@sio.on(...)`` per topic,
 - exposes a single ``on_event`` callable that the high-level
   :class:`aquacontrol.AquaControlClient` fans events out from,
-- handles reconnect with exponential backoff + jitter.
+- handles reconnect with exponential backoff + per-instance jitter.
 
 This module is intentionally narrow — it does no event parsing, no
 listener dispatch, no echo filtering. All higher-level concerns live in
 :mod:`aquacontrol.client`.
+
+Implementation note: the ``_trigger_event`` interception in
+:meth:`StreamConnection._install_trigger_patch` reaches into a private
+attribute of ``socketio.AsyncClient``. That attribute's call signature is
+stable across the 5.x family but is not part of the public API; the
+package's dependency declaration pins to ``python-socketio>=5.10,<6.0``
+and the class additionally checks for its presence at runtime so a
+silent upstream rename surfaces as :class:`AquaControlProtocolError`
+rather than a confusing AttributeError.
 """
 
 from __future__ import annotations
@@ -22,12 +31,12 @@ import asyncio
 import contextlib
 import logging
 import random
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
 import socketio
 
-from .exceptions import AquaControlConnectionError
+from .exceptions import AquaControlConnectionError, AquaControlProtocolError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,12 +56,22 @@ _GOOD_CONNECTION_DWELL_S = 30.0
 #: ``None``; async handlers return a coroutine that will be awaited.
 RawEventCallback = Callable[[str, Any], Any]
 
+#: Async callable that returns a ready-to-use ``Cookie:`` header string
+#: (or ``None`` to connect without authentication). Invoked before each
+#: connect attempt so the library can refresh credentials on reconnect.
+CookieProvider = Callable[[], Awaitable[str | None]]
 
-def _next_backoff(current: float) -> float:
+
+def _next_backoff(current: float, *, rng: random.Random | None = None) -> float:
     """Double, clamp, ±30 % jitter, then re-clamp. Returns a delay in
-    ``[_MIN_BACKOFF_S, _MAX_BACKOFF_S]``."""
+    ``[_MIN_BACKOFF_S, _MAX_BACKOFF_S]``.
+
+    Pass ``rng`` to use a per-instance source. Without it, falls back to
+    the module-global ``random`` (only safe for single-instance use).
+    """
+    source = rng if rng is not None else random
     doubled = min(_MAX_BACKOFF_S, current * 2)
-    jittered = doubled * (0.7 + random.random() * 0.6)
+    jittered = doubled * (0.7 + source.random() * 0.6)
     return max(_MIN_BACKOFF_S, min(_MAX_BACKOFF_S, jittered))
 
 
@@ -73,6 +92,13 @@ class StreamConnection:
     AquaControl integration's UX requires that HA's setup succeed even
     if the device is briefly unreachable, and the reconnect loop covers
     transient outages without user-visible failures.
+
+    **Authentication:** pass ``cookie_provider`` (preferred) to enable
+    re-authentication on each reconnect. The provider is invoked before
+    each connect attempt and its returned ``Cookie:`` header is included
+    in the WebSocket handshake. Passing ``cookie_header`` (legacy)
+    provides a static cookie that never refreshes — use only for tests
+    or short-lived scripts.
     """
 
     def __init__(
@@ -81,8 +107,9 @@ class StreamConnection:
         host: str,
         port: int,
         topics: Iterable[str],
-        cookie_header: str | None,
         on_event: RawEventCallback,
+        cookie_header: str | None = None,
+        cookie_provider: CookieProvider | None = None,
         on_connect: Callable[[], Any] | None = None,
         on_disconnect: Callable[[], Any] | None = None,
         logger: logging.Logger | None = None,
@@ -91,6 +118,7 @@ class StreamConnection:
         self._port = port
         self._topics = tuple(topics)
         self._cookie_header = cookie_header
+        self._cookie_provider = cookie_provider
         self._on_event = on_event
         self._on_connect = on_connect
         self._on_disconnect = on_disconnect
@@ -99,6 +127,10 @@ class StreamConnection:
         self._task: asyncio.Task[None] | None = None
         self._stopping = False
         self._backoff = _MIN_BACKOFF_S
+        # Per-instance RNG so multiple StreamConnections (e.g. several
+        # AQM devices configured in the same HA instance) don't synchronise
+        # their reconnect jitter after a network blip.
+        self._rng = random.Random()
         # Reserved event names — socket.io's own lifecycle signals that
         # aren't part of the AquaControl topic stream and that should
         # never reach the application's on_event callback.
@@ -144,12 +176,16 @@ class StreamConnection:
             except asyncio.CancelledError:
                 raise
             except Exception as err:
+                # Log only the exception TYPE, not its repr — exception
+                # messages from aiohttp / socketio can include URLs and
+                # connection headers we don't want in user logs.
                 self._log.warning(
                     "AquaControl stream connect failed (%s); retrying in %.1fs",
-                    err,
+                    type(err).__name__,
                     self._backoff,
                 )
             if self._stopping:
+                # Exit immediately on shutdown request; don't sleep.
                 return
             # If the connection stayed up long enough, treat it as healthy
             # and reset backoff for the next failure.
@@ -157,7 +193,18 @@ class StreamConnection:
             if elapsed >= _GOOD_CONNECTION_DWELL_S:
                 self._backoff = _MIN_BACKOFF_S
             await asyncio.sleep(self._backoff)
-            self._backoff = _next_backoff(self._backoff)
+            self._backoff = _next_backoff(self._backoff, rng=self._rng)
+
+    async def _resolve_cookie_header(self) -> str | None:
+        """Return the ``Cookie:`` header value to use for the next connect.
+
+        If a :data:`CookieProvider` was supplied, it's invoked fresh on
+        every call so reconnects pick up rotated session cookies. Falls
+        back to the static ``cookie_header`` constructor arg.
+        """
+        if self._cookie_provider is not None:
+            return await self._cookie_provider()
+        return self._cookie_header
 
     async def _connect_once(self) -> None:
         """One connect-and-listen pass. Returns when the socket disconnects."""
@@ -184,13 +231,21 @@ class StreamConnection:
         sio.on("connect", _on_connect)
         sio.on("disconnect", _on_disconnect)
 
+        # Resolve the cookie *now*, not at construction — this is what
+        # makes reconnects re-authenticate when a cookie_provider is set.
+        cookie_header_value = await self._resolve_cookie_header()
         headers: dict[str, str] = {}
-        if self._cookie_header:
-            headers["Cookie"] = self._cookie_header
+        if cookie_header_value:
+            headers["Cookie"] = cookie_header_value
         try:
             await sio.connect(self.url, transports=["websocket"], headers=headers)
-        except socketio.exceptions.ConnectionError as err:
-            raise AquaControlConnectionError(str(err)) from err
+        except socketio.exceptions.ConnectionError:
+            # Drop the exception chain (`from None`): the original
+            # socketio.ConnectionError can carry handshake headers in its
+            # repr, which our public exception shouldn't propagate.
+            raise AquaControlConnectionError(
+                f"WebSocket handshake failed for {self._host}:{self._port}"
+            ) from None
         # Block until disconnect — sio.wait() returns when the socket closes.
         await sio.wait()
         self._sio = None
@@ -203,8 +258,19 @@ class StreamConnection:
         having to register a per-topic handler. The signature varies
         across python-socketio versions (positional vs keyword
         ``namespace``), so we accept both via ``*args, **kwargs``.
+
+        Raises :class:`AquaControlProtocolError` if the expected private
+        attribute is missing — that's the early-warning signal that the
+        installed ``python-socketio`` version isn't compatible (e.g. a
+        6.x install slipped past the dependency pin).
         """
-        original = sio._trigger_event
+        original = getattr(sio, "_trigger_event", None)
+        if not callable(original):
+            raise AquaControlProtocolError(
+                "socketio.AsyncClient has no callable _trigger_event hook — "
+                "incompatible python-socketio version. Requires 5.x.",
+                transient=False,
+            )
 
         async def patched(event: str, *args: Any, **kwargs: Any) -> Any:
             if event not in self._reserved and not event.startswith("__"):

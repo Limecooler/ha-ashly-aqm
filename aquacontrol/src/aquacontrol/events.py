@@ -79,6 +79,12 @@ class Event:
 
     #: The raw payload as delivered. Provided for advanced callers (e.g.
     #: ones that need fields not modelled by :class:`Operation`).
+    #:
+    #: **Security note:** ``raw`` is untrusted data from a network peer
+    #: and can be arbitrarily large (the ``Preset Recall`` middle packet
+    #: routinely reaches ~400 kB). Avoid logging or serialising it
+    #: unconditionally — a DoS-class log flood is easy to trigger. If
+    #: you need to log, truncate at a sensible byte budget yourself.
     raw: Mapping[str, Any]
 
     # ── Convenience accessors for single-op events ─────────────────
@@ -97,6 +103,23 @@ class Event:
     def type(self) -> str | None:
         """``type`` of the single operation, or ``None`` for multi-op events."""
         return self.operations[0].type if len(self.operations) == 1 else None
+
+    @property
+    def is_single_operation(self) -> bool:
+        """True if this event has exactly one operation in ``data``.
+
+        The convenience accessors :attr:`api`, :attr:`records`, and
+        :attr:`type` return ``None``/empty for multi-op events to avoid
+        silently picking the first operation. Use this property to gate
+        access to those accessors::
+
+            if event.is_single_operation and event.api == "/some/path":
+                handle(event.records[0])
+            else:
+                for op in event.operations:
+                    handle_op(op)
+        """
+        return len(self.operations) == 1
 
     # ── Classification helpers ─────────────────────────────────────
 
@@ -139,14 +162,33 @@ class Event:
         return self.unique_id == session_id
 
 
-def parse_event(topic: str, payload: Any) -> Event:
+def parse_event(topic: str, payload: Any, *, strict: bool = False) -> Event:
     """Parse a raw push payload into an :class:`Event`.
 
-    Tolerates malformed shapes by coercing missing fields to safe defaults
-    rather than raising — the device's protocol is loosely typed and a
-    strict parser would brittleify the integration to firmware quirks.
+    By default, tolerates malformed shapes by coercing missing fields to
+    safe defaults rather than raising — the device's protocol is loosely
+    typed and a strict parser would brittleify the integration to firmware
+    quirks.
+
+    Pass ``strict=True`` to make the parser raise
+    :class:`~aquacontrol.exceptions.AquaControlProtocolError` on:
+
+    - a non-mapping outer payload,
+    - a non-sequence ``data`` field,
+    - or a non-mapping entry inside ``data``.
+
+    Strict mode is useful in development for catching firmware schema
+    changes early; in production the default tolerant mode keeps the
+    integration alive across minor wire-format drifts.
     """
+    from .exceptions import AquaControlProtocolError  # local: avoid cycle
+
     if not isinstance(payload, Mapping):
+        if strict:
+            raise AquaControlProtocolError(
+                f"Event payload is not a mapping (topic={topic!r}, "
+                f"got {type(payload).__name__})"
+            )
         return Event(
             topic=topic,
             name="",
@@ -156,10 +198,22 @@ def parse_event(topic: str, payload: Any) -> Event:
         )
     name = str(payload.get("name", ""))
     data = payload.get("data", [])
+    # str/bytes are technically Sequences but are obviously not the
+    # list-of-operations shape we want — treat them as protocol drift.
+    if strict and (not isinstance(data, Sequence) or isinstance(data, (str, bytes))):
+        raise AquaControlProtocolError(
+            f"Event 'data' is not a sequence (topic={topic!r}, name={name!r}, "
+            f"got {type(data).__name__})"
+        )
     ops: list[Operation] = []
-    if isinstance(data, Sequence):
+    if isinstance(data, Sequence) and not isinstance(data, (str, bytes)):
         for op in data:
             if not isinstance(op, Mapping):
+                if strict:
+                    raise AquaControlProtocolError(
+                        f"Operation entry is not a mapping (topic={topic!r}, "
+                        f"name={name!r}, got {type(op).__name__})"
+                    )
                 continue
             records = op.get("records", [])
             if not isinstance(records, list):

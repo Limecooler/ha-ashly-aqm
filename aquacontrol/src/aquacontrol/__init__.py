@@ -27,7 +27,6 @@ from .exceptions import (
     AquaControlProtocolError,
     AquaControlTimeoutError,
 )
-from .stream import StreamConnection
 from .topics import (
     ALL_TOPICS,
     CHANNEL_METERS,
@@ -44,8 +43,12 @@ from .topics import (
     is_meter,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
+# Note: ``StreamConnection`` (in :mod:`aquacontrol.stream`) is an internal
+# implementation detail of :class:`AquaControlClient` and is intentionally
+# not re-exported here. Callers should not depend on its shape — only the
+# high-level client API is covered by the library's stability contract.
 __all__ = [
     "ALL_TOPICS",
     "CHANNEL_METERS",
@@ -67,7 +70,6 @@ __all__ = [
     "Event",
     "EventHandler",
     "Operation",
-    "StreamConnection",
     "Unsubscribe",
     "__version__",
     "cookie_header",

@@ -7,6 +7,7 @@ in the ha-ashly-aqm repo's integration suite.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -296,3 +297,111 @@ async def test_connected_false_without_stream():
     """Before connect() is called, .connected reports False."""
     client = AquaControlClient(host="x", username="u", password="p")
     assert client.connected is False
+
+
+# ── listen() decorator ─────────────────────────────────────────────────
+
+
+async def test_listen_decorator_by_event_name():
+    """@client.listen(name=...) registers as event-name listener."""
+    client = AquaControlClient(host="x", username="u", password="p")
+    seen: list[Event] = []
+
+    @client.listen(name="Set Chain Mute")
+    async def handler(event):
+        seen.append(event)
+
+    assert client.listener_count == 1
+    await client._on_raw_event(
+        "WorkingSettings", {"name": "Set Chain Mute", "data": [], "uniqueId": "s"}
+    )
+    assert len(seen) == 1
+    # Returned object IS the handler function, not an Unsubscribe.
+    assert handler.__name__ == "handler"
+
+
+async def test_listen_decorator_by_topic():
+    client = AquaControlClient(host="x", username="u", password="p")
+    seen: list[Event] = []
+
+    @client.listen(topic="WorkingSettings")
+    async def handler(event):
+        seen.append(event)
+
+    await client._on_raw_event(
+        "WorkingSettings", {"name": "Anything", "data": [], "uniqueId": "s"}
+    )
+    assert len(seen) == 1
+
+
+async def test_listen_decorator_catch_all():
+    client = AquaControlClient(host="x", username="u", password="p")
+    seen: list[Event] = []
+
+    @client.listen()
+    async def handler(event):
+        seen.append(event)
+
+    await client._on_raw_event("System", {"name": "X", "data": [], "uniqueId": "s"})
+    assert len(seen) == 1
+
+
+async def test_listen_rejects_name_and_topic_together():
+    client = AquaControlClient(host="x", username="u", password="p")
+    with pytest.raises(ValueError, match="at most one"):
+        client.listen(name="X", topic="Y")
+
+
+# ── is_own_event convenience ──────────────────────────────────────────
+
+
+async def test_is_own_event_uses_session_id():
+    client = AquaControlClient(host="x", username="u", password="p")
+    event_other = parse_event_helper("other-uuid")
+    event_own = parse_event_helper("my-uuid")
+    # Before set_session_id: nothing is "ours"
+    assert not client.is_own_event(event_own)
+    client.set_session_id("my-uuid")
+    assert client.is_own_event(event_own)
+    assert not client.is_own_event(event_other)
+
+
+def parse_event_helper(unique_id):
+    """Build a minimal Event for is_own_event tests."""
+    from aquacontrol import parse_event
+    return parse_event("System", {"name": "X", "data": [], "uniqueId": unique_id})
+
+
+# ── handler timeout ────────────────────────────────────────────────────
+
+
+async def test_async_handler_timeout_logged_not_propagated(caplog):
+    """A handler that hangs is bounded by _HANDLER_TIMEOUT_S; subsequent
+    handlers still receive the event."""
+    import logging
+
+    from aquacontrol import client as client_mod
+
+    # Monkeypatch the timeout to something tiny so the test is fast.
+    _real_timeout = client_mod._HANDLER_TIMEOUT_S
+    client_mod._HANDLER_TIMEOUT_S = 0.05
+
+    try:
+        client = AquaControlClient(host="x", username="u", password="p")
+        good: list[Event] = []
+
+        async def slow_handler(_e: Event) -> None:
+            await asyncio.sleep(1.0)  # >> timeout
+
+        async def good_handler(e: Event) -> None:
+            good.append(e)
+
+        client.on_any(slow_handler)
+        client.on_any(good_handler)
+
+        with caplog.at_level(logging.WARNING):
+            await client._on_raw_event("System", {"name": "X", "data": [], "uniqueId": "s"})
+        assert len(good) == 1  # good handler still ran after slow timed out
+        assert any("exceeded" in r.message for r in caplog.records)
+    finally:
+        client_mod._HANDLER_TIMEOUT_S = _real_timeout

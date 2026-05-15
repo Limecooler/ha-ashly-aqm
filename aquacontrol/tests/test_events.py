@@ -284,3 +284,80 @@ def test_real_world_payloads():
         assert len(event.operations) == expected_op_count, (
             f"{expected_name}: expected {expected_op_count} ops, got {len(event.operations)}"
         )
+
+
+# ── is_single_operation ────────────────────────────────────────────────
+
+
+def test_is_single_operation_true_for_single_op():
+    event = parse_event(
+        WORKING_SETTINGS,
+        {
+            "name": "Set Chain Mute",
+            "data": [{"api": "/x", "records": [], "type": "modify"}],
+            "uniqueId": "s",
+        },
+    )
+    assert event.is_single_operation
+
+
+def test_is_single_operation_false_for_multi_op():
+    event = parse_event(
+        "Preset",
+        {
+            "name": "Preset Recall",
+            "data": [
+                {"api": "/x", "records": [], "type": "delete"},
+                {"api": "/y", "records": [], "type": "new"},
+            ],
+            "uniqueId": "s",
+        },
+    )
+    assert not event.is_single_operation
+
+
+def test_is_single_operation_false_for_empty_ops():
+    event = parse_event(SYSTEM, {"name": "Preset Recall Begin", "data": [], "uniqueId": "s"})
+    assert not event.is_single_operation
+
+
+# ── strict parsing mode ────────────────────────────────────────────────
+
+
+def test_parse_event_strict_rejects_non_mapping():
+    from aquacontrol.exceptions import AquaControlProtocolError
+
+    with pytest.raises(AquaControlProtocolError, match="not a mapping"):
+        parse_event(SYSTEM, "not a dict", strict=True)
+
+
+def test_parse_event_strict_rejects_non_sequence_data():
+    from aquacontrol.exceptions import AquaControlProtocolError
+
+    with pytest.raises(AquaControlProtocolError, match="'data' is not a sequence"):
+        parse_event(SYSTEM, {"name": "X", "data": "not a list", "uniqueId": "s"}, strict=True)
+
+
+def test_parse_event_strict_rejects_non_mapping_op():
+    from aquacontrol.exceptions import AquaControlProtocolError
+
+    with pytest.raises(AquaControlProtocolError, match="Operation entry"):
+        parse_event(
+            SYSTEM,
+            {"name": "X", "data": ["not a dict"], "uniqueId": "s"},
+            strict=True,
+        )
+
+
+def test_parse_event_strict_passes_well_formed():
+    """Strict mode still accepts the normal case."""
+    event = parse_event(
+        SYSTEM,
+        {
+            "name": "Set Chain Mute",
+            "data": [{"api": "/x", "records": [], "type": "modify"}],
+            "uniqueId": "s",
+        },
+        strict=True,
+    )
+    assert event.name == "Set Chain Mute"

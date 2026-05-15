@@ -15,6 +15,7 @@ surface; nothing else lives here.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Iterable
 from typing import Any, Final
 
@@ -27,8 +28,32 @@ from .exceptions import (
     AquaControlTimeoutError,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 _LOGIN_PATH: Final = "/v1.0-beta/session/login"
 _DEFAULT_TIMEOUT_S: Final = 10.0
+
+# Hosts considered safe for cleartext HTTP without a "transport is unencrypted"
+# warning. AquaControl devices speak only HTTP/WS, so the warning would
+# otherwise fire on every legitimate use; we suppress it for loopback and
+# RFC 1918 private ranges that are typical for on-prem AV installations.
+_LOOPBACK_PREFIXES: Final = ("127.", "::1", "localhost")
+_PRIVATE_NETWORK_PREFIXES: Final = ("10.", "172.16.", "172.17.", "172.18.", "172.19.",
+                                    "172.20.", "172.21.", "172.22.", "172.23.",
+                                    "172.24.", "172.25.", "172.26.", "172.27.",
+                                    "172.28.", "172.29.", "172.30.", "172.31.",
+                                    "192.168.", "fc", "fd")
+
+
+def _looks_like_private_address(host: str) -> bool:
+    """Best-effort check: is `host` a loopback or RFC 1918 private address?
+
+    Returns True for typical home/AV-rack LAN ranges and loopback. Hostnames
+    (DNS names) are NOT considered private — they could resolve anywhere, so
+    we warn for them too.
+    """
+    low = host.lower()
+    return low.startswith(_LOOPBACK_PREFIXES) or low.startswith(_PRIVATE_NETWORK_PREFIXES)
 
 
 async def fetch_session_cookies(
@@ -50,8 +75,24 @@ async def fetch_session_cookies(
     pooling (e.g. when sharing with another REST client); leave as
     ``None`` to open a one-shot session that's closed on exit.
     """
+    if not _looks_like_private_address(host):
+        # The device speaks only plaintext HTTP/WS — there is no TLS path
+        # to a remote AquaControl. A non-private host means the operator
+        # is reaching across an untrusted network, where the cookie + the
+        # login credentials are sniffable. Warn loudly; don't refuse.
+        _LOGGER.warning(
+            "Connecting to AquaControl device over cleartext HTTP at %s — "
+            "credentials and session cookie travel unencrypted. "
+            "Tunnel via VPN or SSH for production deployments.",
+            host,
+        )
     own_session = session is None
     if session is None:
+        # unsafe=True permits cookies on non-HTTPS responses. The AQM device
+        # only speaks plaintext HTTP on its REST + WS ports, so the standard
+        # "drop cookies set over HTTP" jar default would discard the very
+        # ashly-sid cookie the rest of the library depends on. Safe in this
+        # narrow context — see docs/SECURITY-API.md.
         session = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True))
     try:
         try:

@@ -62,17 +62,36 @@ asyncio.run(main())
 
 | Method | Purpose |
 |---|---|
-| `await client.connect()` | REST-login, open WebSocket, start reconnect loop |
+| `await client.connect()` | REST-login, open WebSocket, start reconnect loop. **Re-authenticates on every reconnect** so long-running deployments survive device reboots / cookie expiry. |
 | `await client.disconnect()` | Tear down |
 | `client.on_event(name, fn)` | Listen for events with a specific inner `name` |
 | `client.on_topic(topic, fn)` | Listen for every event on a topic |
 | `client.on_any(fn)` | Catch-all (heartbeats included) |
+| `@client.listen(name=...)` | Decorator form (handler kept until the client is destroyed) |
 | `await client.join(topic)` | Subscribe to an additional topic at runtime |
 | `await client.leave(topic)` | Unsubscribe from a topic |
 | `client.set_session_id(...)` | Pin own session ID for echo filtering |
+| `client.is_own_event(event)` | Convenience: did *this* client trigger that event? |
 
 Every `on_*` returns an `Unsubscribe` callable; invoke it to remove the
-listener. Handlers may be sync or async.
+listener. Handlers may be sync or async. Async handlers are bounded by
+a 5-second timeout so a hung handler can't stall the dispatch chain.
+
+Constructor accepts an optional `session: aiohttp.ClientSession` so the
+caller (e.g. a Home Assistant integration) can share its own session
+for connection-pool reuse, and an optional `logger` so library logs
+appear under the caller's namespace.
+
+Decorator usage example:
+
+```python
+@client.listen(name="Set Chain Mute")
+async def handle_mute(event):
+    if client.is_own_event(event):
+        return  # already applied optimistically
+    record = event.records[0]
+    apply_mute(record["id"], record["muted"])
+```
 
 ### `Event`
 
@@ -288,6 +307,68 @@ What the live suite verifies:
 | `test_runtime_join_subscribes_after_connect` | `client.join(topic)` after connect starts delivering that topic |
 | `test_multi_listener_fan_out_in_documented_order` | `any → topic → event_name` dispatch order |
 | `test_clean_disconnect_stops_background_task` | `client.disconnect()` exits within 3 s |
+
+## Changelog
+
+### 0.2.0
+
+Hardening release driven by an independent multi-agent review (security,
+resilience, HA-compat, best-practices). All findings except the HA-side
+push-poll integration (lives in the consumer, not here) are addressed.
+
+**Resilience**
+- **Auth refresh on reconnect.** Cookies are obtained via a callback
+  invoked on every connect attempt, so long-running deployments survive
+  device reboots and session expiry. Previously the cookie from initial
+  login was used forever.
+- Per-instance jitter RNG — multiple `AquaControlClient` instances on
+  the same LAN no longer synchronise their reconnects after an outage.
+- Async handlers run under a 5-second timeout. A hung listener no
+  longer stalls dispatch for other handlers on the same event.
+
+**Security**
+- Cleartext-HTTP warning when connecting to a non-private host
+  (loopback / RFC 1918 / IPv6 ULA are quiet).
+- Stream-level connect failures log only the exception **type**, not
+  its repr (which could embed handshake URLs / headers).
+- `socketio.ConnectionError` is re-raised with `from None` to drop the
+  exception chain (the cause object can carry per-request headers).
+- New `Event.raw` docstring warns against unconditional logging /
+  serialisation (DoS vector — `Preset Recall` payloads can be ~400 kB).
+
+**HA-integration prep**
+- `AquaControlClient` now accepts a `session: aiohttp.ClientSession`
+  for connection-pool sharing with HA's REST client.
+- `logger=` argument (already present) documented for HA's child-logger
+  pattern.
+- `AquaControlProtocolError(transient: bool)` lets consumers map to
+  `ConfigEntryNotReady` vs. `ConfigEntryError` cleanly.
+
+**Best practices**
+- `StreamConnection` removed from public `__all__`. Still importable
+  via `aquacontrol.stream` for advanced use.
+- New `client.listen(name=..., topic=...)` decorator alongside the
+  existing direct `on_*` methods.
+- New `client.is_own_event(event)` convenience wrapping the
+  `set_session_id` + `is_from_session` pattern.
+- New `event.is_single_operation` property to gate the single-op
+  convenience accessors.
+- New `parse_event(..., strict=True)` mode raises on protocol drift —
+  useful for dev / CI; default mode stays permissive.
+- `python-socketio` pinned to `>=5.10,<6.0` (the private `_trigger_event`
+  hook is 5.x-only). Runtime guard raises `AquaControlProtocolError` if
+  the hook is missing.
+- `aiohttp` pinned to `>=3.9,<4.0`.
+- Auth-helper `CookieJar(unsafe=True)` rationale inline-documented.
+- Removed dead `pass # see set_session_id` block in dispatch.
+
+**Testing**
+- 100 offline tests (was 79), 100 % coverage maintained.
+- 39 live tests against AQM1208 firmware 1.1.8 all pass.
+
+### 0.1.0
+
+Initial public release.
 
 ## License
 

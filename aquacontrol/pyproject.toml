@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aquacontrol"
-version = "0.1.0"
+version = "0.2.0"
 description = "Async Python client for the Ashly AquaControl Socket.IO push API."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -22,8 +22,14 @@ classifiers = [
   "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-  "aiohttp>=3.9",
-  "python-socketio[asyncio_client]>=5.10",
+  # aiohttp's major versions occasionally make breaking API changes; cap to
+  # the current 3.x family.
+  "aiohttp>=3.9,<4.0",
+  # python-socketio: hard-pin to 5.x. The stream wrapper patches a private
+  # attribute (`_trigger_event`) to intercept every topic without registering
+  # per-topic handlers; that hook is internal to 5.x and is likely to change
+  # shape in 6.x.
+  "python-socketio[asyncio_client]>=5.10,<6.0",
 ]
 
 [project.optional-dependencies]
