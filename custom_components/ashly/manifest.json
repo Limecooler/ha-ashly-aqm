@@ -14,8 +14,8 @@
   "issue_tracker": "https://github.com/limecooler/ha-ashly-aqm/issues",
   "loggers": ["custom_components.ashly"],
   "quality_scale": "platinum",
-  "requirements": ["python-socketio[asyncio_client]>=5.10"],
-  "version": "0.7.2",
+  "requirements": ["aquacontrol==0.2.1"],
+  "version": "0.8.0",
   "zeroconf": [
     { "type": "_http._tcp.local.", "name": "aqm*" },
     { "type": "_http._tcp.local.", "name": "ashly*" }

@@ -44,6 +44,12 @@ async def test_async_create_fix_flow_unrelated_returns_noop(hass: HomeAssistant)
     assert isinstance(flow, _NoopRepairFlow)
 
 
+async def test_async_create_fix_flow_push_stale_returns_noop(hass: HomeAssistant):
+    """push_stale_<entry_id> is informational; dispatched to the noop flow."""
+    flow = await async_create_fix_flow(hass, "push_stale_abc123", None)
+    assert isinstance(flow, _NoopRepairFlow)
+
+
 async def test_noop_repair_flow_immediately_creates_entry(hass: HomeAssistant):
     flow = _NoopRepairFlow()
     result = await flow.async_step_init()

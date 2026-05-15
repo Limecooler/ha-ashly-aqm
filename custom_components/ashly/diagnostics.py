@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 
 from .coordinator import AshlyConfigEntry
 
-TO_REDACT = {"password", "host", "mac_address"}
+if TYPE_CHECKING:  # pragma: no cover
+    from .coordinator import AshlyCoordinator
+    from .push import AshlyPushClient
+
+# session_id is a per-WS-connection UUID — not a credential, but it
+# correlates logs across a support ticket. Redact for hygiene since
+# diagnostics bundles are routinely pasted into public GitHub issues.
+TO_REDACT = {"password", "host", "mac_address", "session_id"}
 
 
 async def async_get_config_entry_diagnostics(
@@ -27,6 +34,7 @@ async def async_get_config_entry_diagnostics(
     coordinator = entry.runtime_data.coordinator
     client = entry.runtime_data.client
     meter_client = entry.runtime_data.meter_client
+    push_client = entry.runtime_data.push_client
     data = coordinator.data
 
     coordinator_diag: dict[str, Any] = {
@@ -55,12 +63,15 @@ async def async_get_config_entry_diagnostics(
         ),
     }
 
+    push_diag: dict[str, Any] = _build_push_diag(coordinator, push_client)
+
     return {
         "config_entry_data": async_redact_data(dict(entry.data), TO_REDACT),
         "config_entry_options": dict(entry.options),
         "coordinator": coordinator_diag,
         "client": client_diag,
         "meter": meter_diag,
+        "push": async_redact_data(push_diag, TO_REDACT),
         "system_info": async_redact_data(asdict(data.system_info), TO_REDACT),
         "front_panel": asdict(data.front_panel),
         "power_on": data.power_on,
@@ -73,4 +84,43 @@ async def async_get_config_entry_diagnostics(
         "mic_preamp_gain": {str(k): v for k, v in data.mic_preamp_gain.items()},
         "gpo": {str(k): v for k, v in data.gpo.items()},
         "last_recalled_preset": asdict(data.last_recalled_preset),
+    }
+
+
+def _build_push_diag(
+    coordinator: AshlyCoordinator, push_client: AshlyPushClient | None
+) -> dict[str, Any]:
+    """Construct the ``push`` diagnostics sub-block.
+
+    Returns a fully-populated dict even when ``push_client`` is None so
+    bug reports always carry the connectivity shape, signalling
+    "push isn't running" rather than producing a confusing absent key.
+    The dict is fed through :func:`async_redact_data` by the caller so
+    ``session_id`` lands as ``**REDACTED**`` in the bundle.
+    """
+    if push_client is None:
+        return {
+            "connected": None,
+            "session_id": None,
+            "last_event_at": None,
+            "seconds_since_last_event": None,
+            "subscribed_topics": [],
+            "events_received": 0,
+            "events_received_by_kind": {},
+            "last_error": None,
+        }
+    last_event_at: float | None = push_client.last_event_at
+    seconds_since: float | None = None
+    if last_event_at is not None:
+        seconds_since = coordinator._now() - last_event_at
+    stats = push_client.stats
+    return {
+        "connected": push_client.connected,
+        "session_id": push_client.session_id,
+        "last_event_at": last_event_at,
+        "seconds_since_last_event": seconds_since,
+        "subscribed_topics": list(push_client.subscribed_topics),
+        "events_received": stats.events_received,
+        "events_received_by_kind": dict(stats.events_received_by_kind),
+        "last_error": stats.last_error,
     }

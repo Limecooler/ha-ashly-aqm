@@ -209,81 +209,45 @@ def test_event_is_immutable():
 
 
 def test_real_world_payloads():
-    """A small fixture set captured from a live AQM1208 parses correctly."""
-    fixtures: list[tuple[str, dict, str, int]] = [
-        # (topic, payload, expected_name, expected_op_count)
-        (
-            SYSTEM,
-            {
-                "name": "Modify system info",
-                "data": [
-                    {
-                        "api": "/system/frontPanel/info",
-                        "records": [{"powerState": "Off"}],
-                        "type": "modify",
-                    }
-                ],
-                "uniqueId": "cb0f9400-4f80-11f1-b4ba-43ebb4c1bdbc",
-            },
-            "Modify system info",
-            1,
-        ),
-        (
-            "Preset",
-            {
-                "name": "Preset Recall Begin",
-                "data": [],
-                "uniqueId": "1cc64f50-4f81-11f1-b4ba-43ebb4c1bdbc",
-            },
-            "Preset Recall Begin",
-            0,
-        ),
-        (
-            "Preset",
-            {"name": "Preset Recall End", "data": [], "uniqueId": 0},
-            "Preset Recall End",
-            0,
-        ),
-        (
-            "MicPreamp",
-            {
-                "name": "Change Mic Preamp Gain",
-                "data": [
-                    {
-                        "api": "/micPreamp",
-                        "records": [
-                            {
-                                "id": 1,
-                                "DSPChannelId": "InputChannel.1",
-                                "gain": 6,
-                                "micPreampTypeId": 1,
-                            }
-                        ],
-                        "type": "modify",
-                    }
-                ],
-                "uniqueId": "session-uuid",
-            },
-            "Change Mic Preamp Gain",
-            1,
-        ),
-        (
-            "Events",
-            {
-                "name": "All Scheduled Events Blocked",
-                "data": [{}],
-                "uniqueId": 0,
-            },
-            "All Scheduled Events Blocked",
-            1,
-        ),
+    """A small fixture set captured from a live AQM1208 parses correctly.
+
+    Sourced from :mod:`aquacontrol._testing` so the captures live in one
+    place and downstream consumers can import them via the same dict.
+    """
+    from aquacontrol._testing import SAMPLE_EVENTS
+
+    expectations: list[tuple[str, str, int]] = [
+        # (sample_key, expected_inner_name, expected_op_count)
+        ("SYSTEM_MODIFY_SYSTEM_INFO_FRONT_PANEL_POWER_OFF", "Modify system info", 1),
+        ("PRESET_RECALL_BEGIN", "Preset Recall Begin", 0),
+        ("PRESET_RECALL_END", "Preset Recall End", 0),
+        ("MIC_PREAMP_CHANGE_MIC_PREAMP_GAIN", "Change Mic Preamp Gain", 1),
+        ("EVENTS_ALL_SCHEDULED_EVENTS_BLOCKED", "All Scheduled Events Blocked", 1),
     ]
-    for topic, payload, expected_name, expected_op_count in fixtures:
+    for key, expected_name, expected_op_count in expectations:
+        topic, payload = SAMPLE_EVENTS[key]
         event = parse_event(topic, payload)
         assert event.name == expected_name
         assert len(event.operations) == expected_op_count, (
             f"{expected_name}: expected {expected_op_count} ops, got {len(event.operations)}"
         )
+
+
+def test_sample_events_all_parseable():
+    """Every entry in SAMPLE_EVENTS parses without raising.
+
+    This is the load-bearing contract test for downstream consumers: if
+    the library's own tests pass, the dict is safe to import. A drift
+    here is a wire-format change that consumers must adapt to.
+    """
+    from aquacontrol._testing import SAMPLE_EVENTS
+
+    assert SAMPLE_EVENTS, "SAMPLE_EVENTS must not be empty"
+    for key, (topic, payload) in SAMPLE_EVENTS.items():
+        event = parse_event(topic, payload)
+        # Sanity: the parser preserved the topic and a non-empty name.
+        assert event.topic == topic, f"{key}: topic round-trip failed"
+        assert event.name, f"{key}: parser produced empty name"
 
 
 # ── is_single_operation ────────────────────────────────────────────────

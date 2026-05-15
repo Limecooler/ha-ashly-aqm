@@ -34,7 +34,12 @@ async def async_setup_entry(
 ) -> None:
     """Register sensor entities."""
     coordinator = entry.runtime_data.coordinator
-    meter_client: AshlyMeterClient = entry.runtime_data.meter_client
+    # meter_client is always non-None after async_setup_entry's
+    # `await meter_client.async_start()` returns; the dataclass field is
+    # `... | None` only to permit teardown / lifecycle races. Asserting
+    # makes that invariant explicit for mypy.
+    meter_client = entry.runtime_data.meter_client
+    assert meter_client is not None
     entities: list[SensorEntity] = [
         AshlyFirmwareSensor(coordinator),
         AshlyPresetCountSensor(coordinator),

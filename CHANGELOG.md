@@ -4,6 +4,43 @@ All notable changes to this integration are documented here. Versioning loosely
 follows [Semantic Versioning](https://semver.org/) with the caveat that the
 `<major>.<minor>.<patch>` field also drives HA's HACS update notifications.
 
+## 0.8.0 — 2026-05-15
+
+**Hybrid push + poll.** State changes (mutes, levels, gains, phantom power,
+GPO toggles, front-panel power/LED, channel/DVCA renames, mixer routing)
+now propagate via a second socket.io connection in well under 100 ms
+instead of waiting for the next REST poll. Preset recalls trigger a
+single immediate refresh.
+
+- **iot_class is now `local_push`.** Push is the primary update path;
+  polling is a drift corrector and recovery path for unrouted fields.
+- **Poll interval default 10 s → 60 s.** Push handles real-time. Lower
+  the poll interval in Integration Options only if your network blocks
+  the device's TCP 8001 (the push channel).
+- **Diagnostics expansion.** `push` block in the diagnostics bundle now
+  reports connectivity, last-event timestamp, per-kind event counters,
+  subscribed topics, reconnect count, and last error.
+- **New repair issue: "Push channel quiet."** Surfaces when no push
+  events arrive for 10 minutes — almost always means port 8001 is
+  blocked at the firewall. Polling continues; the issue clears
+  automatically when push resumes.
+- **New dependency: `aquacontrol==0.2.1`** — the standalone Python
+  library that wraps the device's reverse-engineered push API. Includes
+  100% offline coverage and a marker-gated live test suite.
+
+Architecture notes:
+
+- Push runs alongside the existing meter websocket on the same TCP 8001;
+  the device accepts multiple concurrent socket.io connections per
+  session cookie.
+- Echoes (push events for mutations HA initiated) are not filtered on
+  the dispatch path — `always_update=False` plus dataclass equality
+  suppresses redundant fan-outs.
+- Push starts *after* `async_forward_entry_setups` so a slow or
+  unreachable push channel can never block HA's entry-ready signal.
+- Push stops *before* platform unload so an in-flight event can't write
+  into half-removed entities.
+
 ## 0.7.2 — 2026-05-14
 
 - **New diagnostic sensor: IP address.** Surfaces the device's configured

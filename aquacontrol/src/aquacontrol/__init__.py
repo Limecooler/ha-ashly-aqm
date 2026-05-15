@@ -43,7 +43,7 @@ from .topics import (
     is_meter,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 # Note: ``StreamConnection`` (in :mod:`aquacontrol.stream`) is an internal
 # implementation detail of :class:`AquaControlClient` and is intentionally

@@ -26,7 +26,7 @@ from homeassistant.helpers import device_registry as dr
 from .client import AshlyError
 from .const import DOMAIN
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     from .coordinator import AshlyConfigEntry
 
 SERVICE_RECALL_PRESET = "recall_preset"

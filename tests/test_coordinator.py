@@ -513,3 +513,131 @@ async def test_repair_default_credentials_revaluated_per_poll(
     # On the next poll, the per-poll re-evaluation clears the issue.
     await coord._async_update_data()
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+# ── Push staleness lifecycle ────────────────────────────────────────
+
+
+async def test_push_stale_not_raised_if_no_event_ever_received(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """Without at least one observed push event, staleness never raises —
+    the diagnostic surface covers the "never connected" case separately."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.ashly.const import DOMAIN
+
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry)
+    await coord._async_setup()
+    await coord._async_update_data()
+    issue_id = f"push_stale_{mock_config_entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_push_stale_raised_after_threshold(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """A successful poll with no push event for > PUSH_STALE_AFTER_S raises."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.ashly.const import DOMAIN, PUSH_STALE_AFTER_S
+
+    # Drive time forward in the coordinator via the injected `now` callable.
+    clock = [0.0]
+
+    def fake_now() -> float:
+        return clock[0]
+
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry, now=fake_now)
+    await coord._async_setup()
+    # Note an event at t=0.
+    coord.note_push_event()
+    # Advance the clock past the threshold without any new events.
+    clock[0] = PUSH_STALE_AFTER_S + 1
+    await coord._async_update_data()
+    issue_id = f"push_stale_{mock_config_entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+
+async def test_push_stale_clears_eagerly_on_next_event(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """If push resumes after the issue raised, note_push_event clears it
+    immediately rather than waiting for the next poll cycle."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.ashly.const import DOMAIN, PUSH_STALE_AFTER_S
+
+    clock = [0.0]
+
+    def fake_now() -> float:
+        return clock[0]
+
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry, now=fake_now)
+    await coord._async_setup()
+    coord.note_push_event()
+    clock[0] = PUSH_STALE_AFTER_S + 1
+    await coord._async_update_data()
+    issue_id = f"push_stale_{mock_config_entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    # Push resumes — the timestamp moves up to "now" and the watchdog clears.
+    coord.note_push_event()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+    assert coord._push_stale_issue_raised is False
+
+
+async def test_note_push_event_does_not_clear_when_not_raised(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """Common path: event arrives, issue isn't raised — no-op on the registry."""
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry)
+    await coord._async_setup()
+    # No exception, no issue created.
+    coord.note_push_event()
+    assert coord._last_push_event_at is not None
+    assert coord._push_stale_issue_raised is False
+
+
+async def test_last_push_event_at_property_exposes_internal_state(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """The public `last_push_event_at` property is the supported read path
+    for both diagnostics and the push client. Asserting it tracks
+    `note_push_event` matters because it's the single source of truth
+    for the staleness watchdog."""
+    clock = [42.0]
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry, now=lambda: clock[0])
+    assert coord.last_push_event_at is None
+    coord.note_push_event()
+    assert coord.last_push_event_at == 42.0
+
+
+async def test_push_stale_raised_after_failed_poll(
+    hass: HomeAssistant, mock_client, mock_config_entry
+):
+    """Stale-push check now also fires from the poll-failure branch, so a
+    device that loses both REST and push surfaces the push diagnostic too
+    (not just the unreachable one)."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.ashly.client import AshlyConnectionError
+    from custom_components.ashly.const import DOMAIN, PUSH_STALE_AFTER_S
+
+    clock = [0.0]
+    mock_config_entry.add_to_hass(hass)
+    coord = AshlyCoordinator(hass, mock_client, mock_config_entry, now=lambda: clock[0])
+    await coord._async_setup()
+    coord.note_push_event()
+    clock[0] = PUSH_STALE_AFTER_S + 1
+    # Force a poll failure so we go through _track_update_outcome(success=False)
+    mock_client.async_get_front_panel.side_effect = AshlyConnectionError("blip")
+    with pytest.raises(UpdateFailed):
+        await coord._async_update_data()
+    issue_id = f"push_stale_{mock_config_entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None

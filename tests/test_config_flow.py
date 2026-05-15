@@ -231,6 +231,45 @@ async def test_credentials_step_errors(hass: HomeAssistant, exc, error) -> None:
     assert result["errors"] == {"base": error}
 
 
+async def test_credentials_step_no_mac_aborts(hass: HomeAssistant) -> None:
+    """If creds entered at step 2 yield a device without a MAC, abort with no_mac.
+
+    Exercises the `return abort` branch in async_step_credentials when
+    `_maybe_abort_on_mac` decides the response is unusable — distinct
+    from the `_abort_if_unique_id_configured` raise path which doesn't
+    flow through that return.
+    """
+    no_mac = SystemInfo(
+        model="AQM1208",
+        name="MAC-less",
+        firmware_version="1.0",
+        hardware_revision="1.0",
+        mac_address="",  # device returned no MAC
+        has_auto_mix=False,
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    with patch(
+        "custom_components.ashly.config_flow._login_and_get_info",
+        side_effect=AshlyAuthError("force credentials step"),
+    ):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], HOST_INPUT)
+    assert result["step_id"] == "credentials"
+
+    with patch(
+        "custom_components.ashly.config_flow._login_and_get_info",
+        return_value=no_mac,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_USERNAME: "admin", CONF_PASSWORD: "tryagain"},
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_mac"
+
+
 async def test_user_flow_no_mac_aborts(hass: HomeAssistant) -> None:
     """A device without a MAC aborts the flow (the user can't fix this in-form)."""
     no_mac = SystemInfo(

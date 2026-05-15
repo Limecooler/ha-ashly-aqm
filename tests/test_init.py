@@ -160,3 +160,168 @@ async def test_homeassistant_stop_stops_meter(
     hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
     await hass.async_block_till_done()
     meter.async_stop.assert_awaited()
+
+
+async def test_setup_starts_push_after_platform_forward(
+    hass: HomeAssistant, mock_config_entry, _patch_client
+) -> None:
+    """The push client must start AFTER async_forward_entry_setups returns.
+
+    Otherwise a slow/unreachable push endpoint can delay HA's entry-ready
+    signal. The conftest fake_push has async_start as an AsyncMock — we
+    assert it was awaited exactly once during setup.
+    """
+    mock_config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    push = mock_config_entry.runtime_data.push_client
+    push.async_start.assert_awaited_once()
+
+
+async def test_unload_stops_push_before_platform_unload(
+    hass: HomeAssistant, mock_config_entry, _patch_client
+) -> None:
+    """Stop ordering: push.async_stop must run before async_unload_platforms
+    so an in-flight push event can't fire into half-removed entities."""
+    mock_config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    push = mock_config_entry.runtime_data.push_client
+    push.async_stop.reset_mock()
+
+    # Record ordering: capture the entry's state at the moment push.async_stop
+    # is awaited. If push stops before platform unload, the entry is still LOADED.
+    state_at_push_stop: list[ConfigEntryState] = []
+    original_stop = push.async_stop
+
+    async def _capturing_stop():
+        state_at_push_stop.append(mock_config_entry.state)
+        await original_stop()
+
+    push.async_stop = _capturing_stop
+
+    assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
+    assert mock_config_entry.state is ConfigEntryState.NOT_LOADED
+    assert state_at_push_stop == [ConfigEntryState.LOADED], (
+        "push.async_stop must be awaited before platform unload runs"
+    )
+
+
+async def test_homeassistant_stop_stops_push_and_meter(
+    hass: HomeAssistant, mock_config_entry, _patch_client
+) -> None:
+    """EVENT_HOMEASSISTANT_STOP shuts down both WS clients."""
+    from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+
+    mock_config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    push = mock_config_entry.runtime_data.push_client
+    meter = mock_config_entry.runtime_data.meter_client
+    push.async_stop.reset_mock()
+    meter.async_stop.reset_mock()
+
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+    await hass.async_block_till_done()
+    push.async_stop.assert_awaited()
+    meter.async_stop.assert_awaited()
+
+
+async def test_setup_failure_after_platforms_stops_push_and_meter(
+    hass: HomeAssistant, mock_config_entry, mock_client
+) -> None:
+    """If anything after `async_forward_entry_setups` raises (push start,
+    services), the integration must tear down the WS clients before
+    propagating the failure — otherwise the background tasks keep running
+    against a setup_error entry and a retry duplicates them."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    import aiohttp
+
+    from custom_components.ashly.push import PushStats
+
+    fake_session = MagicMock(spec=aiohttp.ClientSession)
+    fake_session.closed = False
+    fake_session.close = AsyncMock(return_value=None)
+
+    fake_meter = MagicMock()
+    fake_meter.async_start = AsyncMock(return_value=None)
+    fake_meter.async_stop = AsyncMock(return_value=None)
+
+    fake_push = MagicMock()
+    # Simulate the real failure mode: connect succeeds, then a later
+    # post-forward step raises. Easiest hook: async_start itself raises.
+    fake_push.async_start = AsyncMock(side_effect=RuntimeError("boom"))
+    fake_push.async_stop = AsyncMock(return_value=None)
+    fake_push.connected = False
+    fake_push.session_id = None
+    fake_push.last_event_at = None
+    fake_push.subscribed_topics = ()
+    fake_push.stats = PushStats()
+
+    with (
+        patch("custom_components.ashly.async_create_clientsession", return_value=fake_session),
+        patch("custom_components.ashly.AshlyClient", return_value=mock_client),
+        patch("custom_components.ashly.AshlyMeterClient", return_value=fake_meter),
+        patch("custom_components.ashly.AshlyPushClient", return_value=fake_push),
+    ):
+        mock_config_entry.add_to_hass(hass)
+        assert not await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    fake_push.async_stop.assert_awaited()
+    fake_meter.async_stop.assert_awaited()
+
+
+async def test_setup_passes_shared_session_to_push_client(
+    hass: HomeAssistant, mock_config_entry, mock_client
+) -> None:
+    """The push client receives the same aiohttp session as the REST client,
+    so a single cookie jar is shared three ways (REST, meter ws, push ws).
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    import aiohttp
+
+    from custom_components.ashly.push import PushStats
+
+    fake_session = MagicMock(spec=aiohttp.ClientSession)
+    fake_session.closed = False
+    fake_session.close = AsyncMock(return_value=None)
+
+    fake_meter = MagicMock()
+    fake_meter.async_start = AsyncMock(return_value=None)
+    fake_meter.async_stop = AsyncMock(return_value=None)
+    fake_meter.connected = False
+    fake_meter.latest_records = []
+
+    fake_push = MagicMock()
+    fake_push.async_start = AsyncMock(return_value=None)
+    fake_push.async_stop = AsyncMock(return_value=None)
+    fake_push.connected = False
+    fake_push.session_id = None
+    fake_push.last_event_at = None
+    fake_push.subscribed_topics = ()
+    fake_push.stats = PushStats()
+
+    with (
+        patch(
+            "custom_components.ashly.async_create_clientsession",
+            return_value=fake_session,
+        ),
+        patch("custom_components.ashly.AshlyClient", return_value=mock_client),
+        patch("custom_components.ashly.AshlyMeterClient", return_value=fake_meter) as MockMeter,
+        patch("custom_components.ashly.AshlyPushClient", return_value=fake_push) as MockPush,
+    ):
+        mock_config_entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    push_kwargs = MockPush.call_args.kwargs
+    assert push_kwargs["session"] is fake_session
+    # Meter client receives the cookie_jar separately (its constructor predates
+    # the session= kwarg pattern); the session it later opens internally still
+    # honours the same jar. Smoke-assert MockMeter was called.
+    MockMeter.assert_called_once()

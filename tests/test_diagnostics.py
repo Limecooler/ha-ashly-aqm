@@ -45,6 +45,7 @@ async def test_diagnostics_contains_expected_top_level_keys(
         "coordinator",
         "client",
         "meter",
+        "push",
         "system_info",
         "front_panel",
         "power_on",
@@ -61,7 +62,7 @@ async def test_diagnostics_contains_expected_top_level_keys(
 
 
 def test_to_redact_set() -> None:
-    assert {"password", "host", "mac_address"} == TO_REDACT
+    assert {"password", "host", "mac_address", "session_id"} == TO_REDACT
 
 
 async def test_diagnostics_includes_coordinator_health(hass: HomeAssistant, loaded_entry) -> None:
@@ -71,7 +72,7 @@ async def test_diagnostics_includes_coordinator_health(hass: HomeAssistant, load
     assert coord["last_update_success"] is True
     assert coord["consecutive_failures"] == 0
     assert coord["unreachable_issue_raised"] is False
-    assert coord["update_interval_s"] == 10
+    assert coord["update_interval_s"] == 60
     assert coord["crosspoint_patches_pending"] == 0
 
 
@@ -113,3 +114,54 @@ async def test_diagnostics_with_no_update_interval(hass: HomeAssistant, loaded_e
     loaded_entry.runtime_data.coordinator.update_interval = None
     diag = await async_get_config_entry_diagnostics(hass, loaded_entry)
     assert diag["coordinator"]["update_interval_s"] is None
+
+
+async def test_diagnostics_push_block_shape(hass: HomeAssistant, loaded_entry) -> None:
+    """Push block surfaces every diagnostic key.
+
+    The patched_session fixture supplies a disconnected fake push client,
+    so we see the "wired but offline" shape — every field present, values
+    reflecting an idle client.
+    """
+    diag = await async_get_config_entry_diagnostics(hass, loaded_entry)
+    push = diag["push"]
+    assert set(push) == {
+        "connected",
+        "session_id",
+        "last_event_at",
+        "seconds_since_last_event",
+        "subscribed_topics",
+        "events_received",
+        "events_received_by_kind",
+        "last_error",
+    }
+    assert push["connected"] is False  # fake_push.connected = False
+    assert push["events_received"] == 0
+
+
+async def test_diagnostics_with_null_push_client(
+    hass: HomeAssistant, loaded_entry
+) -> None:
+    """If push_client is None (lifecycle race or disabled), diag still renders."""
+    loaded_entry.runtime_data.push_client = None
+    diag = await async_get_config_entry_diagnostics(hass, loaded_entry)
+    push = diag["push"]
+    assert push["connected"] is None
+    assert push["session_id"] is None
+    assert push["subscribed_topics"] == []
+    assert push["events_received"] == 0
+    assert push["events_received_by_kind"] == {}
+
+
+async def test_diagnostics_seconds_since_last_event_populated_when_event_seen(
+    hass: HomeAssistant, loaded_entry
+) -> None:
+    """When push has seen at least one event, seconds_since_last_event is
+    populated from coordinator._now() - last_event_at."""
+    push = loaded_entry.runtime_data.push_client
+    push.last_event_at = 100.0
+    coord = loaded_entry.runtime_data.coordinator
+    coord._now = lambda: 130.0
+    diag = await async_get_config_entry_diagnostics(hass, loaded_entry)
+    assert diag["push"]["last_event_at"] == 100.0
+    assert diag["push"]["seconds_since_last_event"] == 30.0

@@ -235,6 +235,11 @@ async def async_create_fix_flow(
     if issue_id.startswith("default_credentials_"):
         entry_id = issue_id.removeprefix("default_credentials_")
         return DefaultCredentialsRepairFlow(hass, entry_id)
+    # `push_stale_<entry_id>` is informational only — there's no fix flow
+    # the integration can run (the underlying cause is network-side). The
+    # issue raises after 10 min of push silence and clears automatically
+    # when push events resume. Dispatched to the noop flow so clicking
+    # "Submit" in the repairs panel just acknowledges the issue.
     return _NoopRepairFlow()
 
 

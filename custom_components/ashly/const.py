@@ -9,11 +9,13 @@ DOMAIN = "ashly"
 DEFAULT_PORT = 8000
 DEFAULT_USERNAME = "admin"
 DEFAULT_PASSWORD = "secret"
-# Reduced from 30s to 10s after socket.io push reverse-engineering confirmed
-# the device handles a 9-endpoint gather every 10s without strain. A future
-# release will switch to push-only and drop this poll to ~10 min as a sanity
-# check, but for now the integration still relies on REST polling.
-DEFAULT_SCAN_INTERVAL = 10
+# Push (socket.io on port 8001) carries every user-visible state change in
+# <100ms, so polling is now a drift corrector + recovery path for the field
+# subset push doesn't model. 60s strikes the balance: cheap enough to barely
+# register on either the device or HA, frequent enough to mask a 10-minute
+# push outage without the user noticing more than once. Override per-entry
+# via Integration Options if your deployment needs faster fallback.
+DEFAULT_SCAN_INTERVAL = 60
 
 CONF_PORT = "port"
 CONF_CREATE_SERVICE_ACCOUNT = "create_service_account"
@@ -34,8 +36,10 @@ SERVICE_ACCOUNT_PERMISSIONS = (
     "Rear Panel Controls Edit",   # GPO toggles
     "Preset Edit",                # future preset save support
 )
-# 16 hex chars satisfies the alphanumeric, 4..20 constraint and is plenty of
-# entropy for an inside-network service credential.
+# The device caps passwords at 4..20 alphanumeric chars, so 8 bytes (= 16
+# hex chars) is the maximum entropy we can store: 64 bits. That's the
+# practical cap for *this* hardware; firmware that ever relaxes the
+# password length limit could move this up.
 SERVICE_ACCOUNT_PASSWORD_HEX_BYTES = 8
 
 # Device topology (AQM1208)
@@ -80,6 +84,21 @@ METER_INPUT_RANGE_DB = (-60.0, 20.0)  # dBu scale per channel meterParameter
 # Reasonable HA refresh cadence: meters arrive ~6 Hz from the device, we
 # throttle to 1 Hz to avoid spamming the recorder / frontend.
 METER_PUBLISH_INTERVAL_S = 1.0
+
+# Push event websocket — the same socket.io endpoint as the meters, but a
+# second client connection subscribed to the device's state-change topics.
+# (See docs/WEBSOCKET-API.md for the reverse-engineered protocol.) Both
+# meter and push clients connect to this port; the device handles multiple
+# concurrent socket.io sessions per cookie. Set as a named constant for
+# clarity; the value mirrors METER_WS_PORT.
+PUSH_WS_PORT = METER_WS_PORT
+
+# How long the coordinator may go without seeing any push event (state OR
+# ambient heartbeat) before raising the "push channel quiet" repair issue.
+# Ambient `System Info Values` arrives ~30s on a healthy device, so a
+# 10-minute gap is unambiguously a broken push channel — usually port 8001
+# blocked at the firewall or the device's WS server is wedged.
+PUSH_STALE_AFTER_S = 600
 
 ASHLY_MAC_PREFIX = "0014AA"
 

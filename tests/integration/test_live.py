@@ -485,6 +485,7 @@ async def test_diagnostics_from_live_coordinator(live_client: AshlyClient) -> No
             "coordinator",
             "client",
             "meter",
+            "push",
             "system_info",
             "front_panel",
             "power_on",
@@ -985,3 +986,114 @@ async def test_crosspoints_full_matrix_consistent(live_client: AshlyClient) -> N
         assert isinstance(state.muted, bool)
         # Level should be in the documented dB range.
         assert -50.5 <= state.level_db <= 12.5
+
+
+# ── Push smoke: dual socket.io + REST-mutation roundtrip ────────────
+
+
+async def test_push_and_meter_coexist_and_propagate_mute_roundtrip(
+    ashly_host: str,
+    ashly_meter_port: int,
+    ashly_port: int,
+    ashly_username: str,
+    ashly_password: str,
+    live_session: aiohttp.ClientSession,
+    live_client: AshlyClient,
+) -> None:
+    """Two concurrent socket.io connections (meter + push) on the same port
+    coexist on a real device, and a REST mutation propagates back via push
+    to the coordinator within 500 ms.
+
+    Belt-and-suspenders for the dual-WS risk row in PLAN-push-integration.md
+    §10 — the device's socket.io server accepts multiple sessions per cookie
+    in our reverse-engineering but the failure mode (silent connection cap)
+    would only surface on real hardware.
+
+    Mutates output channel mute on the *last* output channel and restores
+    in a try/finally so the test leaves the device untouched.
+    """
+    import contextlib
+
+    from custom_components.ashly.meter import AshlyMeterClient
+    from custom_components.ashly.push import AshlyPushClient
+
+    # Pick a dummy coordinator just for the push client's note_push_event
+    # callback. We're not testing the coordinator here — just connectivity
+    # and roundtrip — so a MagicMock with the surface we need is enough.
+    fake_coord = MagicMock()
+    fake_coord.data = None  # forces routable-event handler to short-circuit
+    fake_coord.note_push_event = MagicMock()
+    fake_coord._last_push_event_at = None
+    fake_coord.async_request_refresh = MagicMock(
+        side_effect=lambda: _noop_async()  # type: ignore[no-untyped-call]
+    )
+    fake_coord.async_set_updated_data = MagicMock()
+
+    async def _noop_async() -> None:
+        return None
+
+    cookie_jar = aiohttp.CookieJar(unsafe=True)
+    meter = AshlyMeterClient(
+        host=ashly_host,
+        port=ashly_port,
+        cookie_jar=cookie_jar,
+        socketio_port=ashly_meter_port,
+    )
+    push = AshlyPushClient(
+        hass=MagicMock(),  # unused — push doesn't call into hass directly
+        coordinator=fake_coord,
+        host=ashly_host,
+        rest_port=ashly_port,
+        ws_port=ashly_meter_port,
+        username=ashly_username,
+        password=ashly_password,
+        session=live_session,
+    )
+
+    # The dummy coordinator gets its note_push_event hooked; we use it
+    # as the event-arrival signal so we don't rely on private state of
+    # AshlyPushClient. Track the count.
+    received: list[float] = []
+    fake_coord.note_push_event = MagicMock(side_effect=lambda: received.append(0.0))
+
+    await meter.async_start()
+    await push.async_start()
+    try:
+        # Both connections must come up.
+        async def _both_connected() -> bool:
+            return meter.connected and push.connected
+
+        deadline = asyncio.get_running_loop().time() + 5.0
+        while not await _both_connected():
+            assert asyncio.get_running_loop().time() < deadline, (
+                "meter+push didn't both connect within 5s — dual socket.io may be capped"
+            )
+            await asyncio.sleep(0.1)
+
+        # Grab the last output channel and flip mute via REST.
+        original_chains = await live_client.async_get_chain_state()
+        target = output_channel_id(NUM_OUTPUTS)
+        original_muted = original_chains[target].muted
+        new_muted = not original_muted
+
+        received_before = len(received)
+        await live_client.async_set_chain_mute(target, new_muted)
+
+        # Wait up to 500 ms for a push event to arrive. The fake coordinator
+        # has data=None so routable handlers short-circuit early; the
+        # heartbeat (on_any) still fires and bumps `received` via the
+        # note_push_event side-effect we wired above.
+        wait_deadline = asyncio.get_running_loop().time() + 0.5
+        while len(received) <= received_before:
+            if asyncio.get_running_loop().time() > wait_deadline:
+                pytest.fail(
+                    "no push event received within 500 ms of REST mutation — "
+                    "dual socket.io may be silently dropping push events"
+                )
+            await asyncio.sleep(0.02)
+    finally:
+        # Restore device state.
+        with contextlib.suppress(Exception):
+            await live_client.async_set_chain_mute(target, original_muted)
+        await push.async_stop()
+        await meter.async_stop()

@@ -93,7 +93,7 @@
           "poll_interval": "Polling interval (seconds)"
         },
         "data_description": {
-          "poll_interval": "How often Home Assistant polls the device for state. **10 s is the default** for responsive dashboards. Higher values reduce CPU load on the embedded device; lower values feel snappier but can starve the device if multiple consumers share it. Live meter readings update at 1 Hz via a separate websocket regardless of this setting."
+          "poll_interval": "How often Home Assistant polls the device for state. **60 s is the default** — push events propagate state changes in real time, so polling is mainly a drift corrector and recovery path. Lower values are only useful if the device's socket.io push channel (TCP 8001) is unreachable for an extended period. Live meter readings update at 1 Hz via a separate websocket regardless of this setting."
         }
       }
     }
@@ -208,6 +208,10 @@
     "device_unreachable": {
       "title": "Ashly device has been unreachable",
       "description": "Home Assistant has not been able to reach the Ashly device at {host} for several polls. The most common causes are: the device powered off, a network/cable disruption, or the device's IP address changing (e.g. via DHCP renewal). If the IP has changed, update it via **Settings → Devices & services → Ashly Audio → Configure**. This issue will clear automatically on the next successful poll."
+    },
+    "push_stale": {
+      "title": "Ashly push channel quiet on {host}",
+      "description": "Home Assistant hasn't received any push events from {host} for more than 10 minutes. The integration has fallen back to polling, so state changes triggered outside Home Assistant (front-panel touchscreen, AquaControl Portal, scheduler) may be slower to appear in dashboards. The most common cause is a firewall blocking the device's socket.io port (TCP 8001). This issue will clear automatically when push resumes."
     }
   },
   "exceptions": {

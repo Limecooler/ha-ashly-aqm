@@ -28,7 +28,7 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     # mypy only sees the new HA 2026.2+ location; the runtime fallback below
     # is invisible to typing.
     from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo

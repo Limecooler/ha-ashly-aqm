@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
@@ -40,10 +42,14 @@ from .const import (
     DOMAIN,
     NUM_INPUTS,
     NUM_MIXERS,
+    PUSH_STALE_AFTER_S,
 )
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     from homeassistant.core import HomeAssistant
+
+    from .meter import AshlyMeterClient
+    from .push import AshlyPushClient
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -97,7 +103,8 @@ class AshlyData:
 
     client: AshlyClient
     coordinator: AshlyCoordinator
-    meter_client: Any = None  # AshlyMeterClient; typed as Any to avoid a cycle
+    meter_client: AshlyMeterClient | None = None
+    push_client: AshlyPushClient | None = None
 
 
 type AshlyConfigEntry = ConfigEntry[AshlyData]
@@ -128,6 +135,8 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
         hass: HomeAssistant,
         client: AshlyClient,
         config_entry: AshlyConfigEntry,
+        *,
+        now: Callable[[], float] = time.monotonic,
     ) -> None:
         raw_interval = config_entry.options.get("poll_interval", DEFAULT_SCAN_INTERVAL)
         try:
@@ -163,6 +172,13 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
         # a short-window timer (see `queue_crosspoint_patch`).
         self._crosspoint_pending: dict[tuple[int, int], CrosspointState] = {}
         self._crosspoint_flush_handle: asyncio.TimerHandle | None = None
+        # Push-event heartbeat tracking. The push client calls
+        # `note_push_event()` on every event (state or ambient); we use
+        # the timestamp to raise/clear the `push_stale_<entry_id>` repair
+        # issue. None until the first event is observed.
+        self._now = now
+        self._last_push_event_at: float | None = None
+        self._push_stale_issue_raised: bool = False
 
     async def _async_setup(self) -> None:
         """Fetch one-time data: system info + channel topology."""
@@ -229,6 +245,10 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
         row, a Warning-severity repair issue surfaces in Settings → Repairs
         pointing the user at the reconfigure flow (in case the device's IP
         has drifted via DHCP). Cleared on the first successful poll.
+
+        Also re-evaluates the push-stale repair issue on every successful
+        poll, since the staleness check rides on the same cadence the
+        coordinator already runs and avoids needing a dedicated timer.
         """
         issue_id = f"device_unreachable_{self.config_entry.entry_id}"
         if success:
@@ -236,6 +256,7 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
             if self._unreachable_issue_raised:
                 ir.async_delete_issue(self.hass, DOMAIN, issue_id)
                 self._unreachable_issue_raised = False
+            self._evaluate_push_stale_issue()
             return
         self._consecutive_failures += 1
         if (
@@ -252,6 +273,64 @@ class AshlyCoordinator(DataUpdateCoordinator[AshlyDeviceData]):
                 translation_placeholders={"host": self.client.host},
             )
             self._unreachable_issue_raised = True
+        # Push staleness rides on the poll cadence either way — without
+        # this, a device that's totally unreachable (both REST and push
+        # dead) would surface the unreachable issue but never the
+        # push_stale issue, hiding half the diagnostic story.
+        self._evaluate_push_stale_issue()
+
+    def _evaluate_push_stale_issue(self) -> None:
+        """Raise or clear the push-stale issue based on heartbeat age.
+
+        Only meaningful once we've seen at least one push event — before
+        that, the channel might still be in its initial connect or the
+        user might have a network configuration where push never arrives.
+        Either way, raising the issue before observing a single event
+        would be noise: the diagnostic surface already exposes
+        ``push.connected`` for the genuinely-never-connected case.
+        """
+        if self._last_push_event_at is None:
+            return
+        issue_id = f"push_stale_{self.config_entry.entry_id}"
+        gap = self._now() - self._last_push_event_at
+        if gap > PUSH_STALE_AFTER_S and not self._push_stale_issue_raised:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="push_stale",
+                translation_placeholders={"host": self.client.host},
+            )
+            self._push_stale_issue_raised = True
+        elif gap <= PUSH_STALE_AFTER_S and self._push_stale_issue_raised:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            self._push_stale_issue_raised = False
+
+    @property
+    def last_push_event_at(self) -> float | None:
+        """Monotonic timestamp of the most recent push event, or None if
+        push has never delivered an event.
+
+        Read by :class:`AshlyPushClient` and the diagnostics builder.
+        """
+        return self._last_push_event_at
+
+    @callback
+    def note_push_event(self) -> None:
+        """Called by :class:`AshlyPushClient` after every received event.
+
+        Stamps ``_last_push_event_at`` so the staleness watchdog reflects
+        when the channel was last alive (state event *or* ambient
+        heartbeat). Cheap by design — called potentially several times
+        per second on Preset Recall and meters.
+        """
+        self._last_push_event_at = self._now()
+        # If the issue is currently raised and an event just arrived,
+        # clear it eagerly rather than waiting for the next poll.
+        if self._push_stale_issue_raised:
+            self._evaluate_push_stale_issue()
 
     @property
     def channels(self) -> dict[str, DSPChannel]:

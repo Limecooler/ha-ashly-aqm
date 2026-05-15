@@ -9,7 +9,7 @@ hand against the underlying entity.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import voluptuous as vol
 from homeassistant.components.device_automation import DEVICE_TRIGGER_BASE_SCHEMA
@@ -27,9 +27,6 @@ from homeassistant.helpers.trigger import TriggerActionType, TriggerInfo
 from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN
-
-if TYPE_CHECKING:
-    pass
 
 TRIGGER_TYPES = {"preset_recalled"}
 

@@ -227,6 +227,28 @@ def mock_meter_client() -> MagicMock:
 
 
 @pytest.fixture
+def mock_push_client() -> MagicMock:
+    """A push-client stand-in for entity / diagnostics tests.
+
+    Mirrors the shape of :class:`custom_components.ashly.push.AshlyPushClient`
+    — connected flag, session_id, last_event_at, subscribed_topics, stats
+    (a real lightweight object so diagnostics' ``repr(last_error)`` produces
+    something deterministic), plus the two lifecycle methods.
+    """
+    from custom_components.ashly.push import PushStats
+
+    pc = MagicMock()
+    pc.connected = True
+    pc.session_id = "test-session-uuid"
+    pc.last_event_at = None
+    pc.subscribed_topics = ("System", "WorkingSettings", "Preset")
+    pc.stats = PushStats()
+    pc.async_start = AsyncMock(return_value=None)
+    pc.async_stop = AsyncMock(return_value=None)
+    return pc
+
+
+@pytest.fixture
 def mock_config_entry() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
@@ -261,6 +283,21 @@ def patched_session():
     fake_meter.async_stop = AsyncMock(return_value=None)
     fake_meter.add_listener = MagicMock(return_value=lambda: None)
 
+    # The push client also opens a socket.io connection at setup; mock
+    # it out the same way as the meter client. Without this, the first
+    # entity-platform test that hits async_setup_entry would start a
+    # real background task connecting to port 8001.
+    from custom_components.ashly.push import PushStats
+
+    fake_push = MagicMock()
+    fake_push.connected = False
+    fake_push.session_id = None
+    fake_push.last_event_at = None
+    fake_push.subscribed_topics = ()
+    fake_push.stats = PushStats()
+    fake_push.async_start = AsyncMock(return_value=None)
+    fake_push.async_stop = AsyncMock(return_value=None)
+
     with (
         patch(
             "custom_components.ashly.async_create_clientsession",
@@ -273,6 +310,10 @@ def patched_session():
         patch(
             "custom_components.ashly.AshlyMeterClient",
             return_value=fake_meter,
+        ),
+        patch(
+            "custom_components.ashly.AshlyPushClient",
+            return_value=fake_push,
         ),
     ):
         yield fake_session
